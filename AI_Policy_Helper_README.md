@@ -70,11 +70,19 @@ Run unit tests inside the backend container:
 ```bash
 docker compose run --rm backend pytest -q
 ```
+- Suites are split under `backend/app/tests/`:
+  - `unit/` — helpers (`_hash_to_uuid`, chunking, doc loaders, etc.).
+  - `integration/` — API flows, ingestion idempotency, metrics, and the two acceptance queries (assert specific citations are returned).
 
 ## Notes
 - Keep it simple. For take-home, focus on correctness, citations, and clean code.
 
 ---
+
+## Current Enhancements & Guardrails
+- **Deterministic chunk IDs + dedupe** — `QdrantStore.upsert` now converts chunk hashes into UUIDs and `RAGEngine` tracks `_chunk_hashes`, so re-ingesting the same docs is a no-op (no duplicate points, accurate `indexed_docs/chunks`, stable metrics).
+- **Automated coverage** — Extended pytest suite ensures ingestion, metrics, and the two required questions keep working; unit tests cover chunking helpers and UUID hashing.
+- **Acceptance checks baked into tests** — `tests/integration/test_acceptance_queries.py` programmatically verifies the “damaged blender” and “East Malaysia SLA” prompts cite the mandated documents, matching the rubric expectations.
 
 ## Candidate Instructions (Read Me First)
 

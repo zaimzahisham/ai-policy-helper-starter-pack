@@ -163,6 +163,7 @@ class RAGEngine:
 
         self.metrics = Metrics()
         self._doc_titles = set()
+        self._chunk_hashes = set()
         self._chunk_count = 0
 
     def ingest_chunks(self, chunks: List[Dict]) -> Tuple[int, int]:
@@ -173,6 +174,9 @@ class RAGEngine:
         for ch in chunks:
             text = ch["text"]
             h = doc_hash(text)
+            if h in self._chunk_hashes:
+                continue
+            self._chunk_hashes.add(h)
             meta = {
                 "id": h,
                 "hash": h,
@@ -186,7 +190,8 @@ class RAGEngine:
             self._doc_titles.add(ch["title"])
             self._chunk_count += 1
 
-        self.store.upsert(vectors, metas)
+        if vectors:
+            self.store.upsert(vectors, metas)
         return (len(self._doc_titles) - len(doc_titles_before), len(metas))
 
     def retrieve(self, query: str, k: int = 4) -> List[Dict]:
