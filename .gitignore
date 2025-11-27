@@ -1,0 +1,3 @@
+.vscode/settings.json
+backend/*/*/__pycache__/
+frontend/node_modules/
