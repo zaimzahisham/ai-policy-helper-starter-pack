@@ -4,6 +4,7 @@ import numpy as np
 from .settings import settings
 from .ingest import chunk_text, doc_hash
 from qdrant_client import QdrantClient, models as qm
+import uuid
 
 # ---- Simple local embedder (deterministic) ----
 def _tokenize(s: str) -> List[str]:
@@ -70,7 +71,8 @@ class QdrantStore:
     def upsert(self, vectors: List[np.ndarray], metadatas: List[Dict]):
         points = []
         for i, (v, m) in enumerate(zip(vectors, metadatas)):
-            points.append(qm.PointStruct(id=m.get("id") or m.get("hash") or i, vector=v.tolist(), payload=m))
+            point_id = _hash_to_uuid(m["hash"]) if m.get("hash") else str(uuid.uuid4()) # ensure point_id is a valid UUID, otherwise qdrant will reject the point
+            points.append(qm.PointStruct(id=point_id, vector=v.tolist(), payload=m))
         self.client.upsert(collection_name=self.collection, points=points)
 
     def search(self, query: np.ndarray, k: int = 4) -> List[Tuple[float, Dict]]:
@@ -217,3 +219,8 @@ def build_chunks_from_docs(docs: List[Dict], chunk_size: int, overlap: int) -> L
         for ch in chunk_text(d["text"], chunk_size, overlap):
             out.append({"title": d["title"], "section": d["section"], "text": ch})
     return out
+
+def _hash_to_uuid(hex_hash: str) -> str:
+    # truncate/pad to 32 chars as UUIDs must be exactly 32 hex digits
+    trimmed = hex_hash[:32].ljust(32, "0")
+    return str(uuid.UUID(trimmed))
