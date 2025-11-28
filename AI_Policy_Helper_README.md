@@ -26,6 +26,12 @@ curl -X POST http://localhost:8000/api/ask -H 'Content-Type: application/json' \
   -d '{"query":"What’s the shipping SLA to East Malaysia for bulky items?"}'
 ```
 
+## Developer workflow
+
+- `make dev-hot` → runs `docker compose -f docker-compose.yml -f docker-compose.dev.yml up`, bind-mounting `backend/app` and the frontend workspace so Uvicorn (`--reload`) and Next.js (`npm run dev`) hot-reload as you edit.
+- `make test-hot` → runs `docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm backend pytest -q`, which bind-mounts `backend/app` during the test command so pytest sees your latest files without rebuilding.
+- `make dev` → original `docker compose up --build` path, useful for a final prod-style verification.
+
 ## Offline-friendly
 - If you **don’t** set an API key, the backend uses a **deterministic stub LLM** and a **built-in embedding** to keep everything fully local.
 - If you set `OPENAI_API_KEY` (or configure Ollama), the backend will use real models automatically.
@@ -69,6 +75,7 @@ ai-policy-helper/
 Run unit tests inside the backend container:
 ```bash
 docker compose run --rm backend pytest -q
+docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm backend pytest -q
 ```
 - Suites are split under `backend/app/tests/`:
   - `unit/` — helpers (`_hash_to_uuid`, chunking, doc loaders, etc.).
