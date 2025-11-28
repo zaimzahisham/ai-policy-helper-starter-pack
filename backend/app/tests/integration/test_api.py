@@ -31,3 +31,12 @@ def test_metrics_after_ask(client):
     assert metrics["total_chunks"] >= 1
     assert metrics["avg_retrieval_latency_ms"] >= 0
     assert metrics["llm_model"] == "stub"
+
+def test_ingest_missing_data_dir(client, monkeypatch):
+    from app.settings import settings
+    monkeypatch.setattr(settings, "data_dir", "/tmp/does_not_exist")
+    resp = client.post("/api/ingest", headers={"Origin": "http://localhost:3000"}) # mimic a browser so CORS headers are returned
+    assert resp.status_code == 404
+    body = resp.json()
+    assert body["detail"].lower().startswith("data directory")
+    assert resp.headers["access-control-allow-origin"] == "*"

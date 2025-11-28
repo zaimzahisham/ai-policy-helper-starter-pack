@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from typing import List
@@ -30,10 +30,15 @@ def metrics():
 
 @app.post("/api/ingest", response_model=IngestResponse)
 def ingest():
-    docs = load_documents(settings.data_dir)
-    chunks = build_chunks_from_docs(docs, settings.chunk_size, settings.chunk_overlap)
-    new_docs, new_chunks = engine.ingest_chunks(chunks)
-    return IngestResponse(indexed_docs=new_docs, indexed_chunks=new_chunks)
+    try:
+        docs = load_documents(settings.data_dir)
+        chunks = build_chunks_from_docs(docs, settings.chunk_size, settings.chunk_overlap)
+        new_docs, new_chunks = engine.ingest_chunks(chunks)
+        return IngestResponse(indexed_docs=new_docs, indexed_chunks=new_chunks)
+    except Exception as e:
+        if isinstance(e, FileNotFoundError):
+            raise HTTPException(status_code=404, detail=f"Data directory not found: {settings.data_dir}")
+        raise HTTPException(status_code=500, detail=f"Error ingesting documents: {str(e)}")
 
 @app.post("/api/ask", response_model=AskResponse)
 def ask(req: AskRequest):
