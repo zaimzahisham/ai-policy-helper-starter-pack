@@ -48,27 +48,45 @@ ai-policy-helper/
 │  │  ├─ ingest.py        # doc loader & chunker
 │  │  ├─ __init__.py
 │  │  └─ tests/
-│  │     ├─ conftest.py
-│  │     └─ test_api.py
+│  │     ├─ conftest.py        # pytest fixtures & setup
+│  │     ├─ unit/               # unit tests for isolated logic
+│  │     │  ├─ test_ingest.py  # chunking & doc loading tests
+│  │     │  └─ test_rag_helpers.py # hash→UUID, build_chunks tests
+│  │     └─ integration/       # integration tests for API flows
+│  │        ├─ test_api.py     # ingest, metrics, ask endpoints
+│  │        ├─ test_acceptance_queries.py # acceptance criteria validation
+│  │        ├─ test_fallback.py # Qdrant fallback to InMemoryStore
+│  │        └─ test_openai_mode_with_mock.py # OpenAI provider smoke test
 │  ├─ requirements.txt
 │  └─ Dockerfile
 ├─ frontend/
 │  ├─ app/
-│  │  ├─ page.tsx         # chat UI
-│  │  ├─ layout.tsx
-│  │  └─ globals.css
+│  │  ├─ page.tsx         # main page layout
+│  │  ├─ layout.tsx       # root layout with ToastProvider
+│  │  └─ globals.css      # Tailwind directives + CSS variables + animations
 │  ├─ components/
-│  │  ├─ Chat.tsx
-│  │  └─ AdminPanel.tsx
-│  ├─ lib/api.ts
+│  │  ├─ Chat.tsx         # chat interface with citations & chunk expansion
+│  │  ├─ AdminPanel.tsx   # ingestion controls + metrics display
+│  │  ├─ MetricsDisplay.tsx # formatted metrics visualization
+│  │  ├─ Toast.tsx        # toast notification component
+│  │  └─ ToastProvider.tsx # toast context & state management
+│  ├─ lib/
+│  │  ├─ api.ts           # type-safe API client with error handling
+│  │  └─ utils.ts         # className utility (cn)
 │  ├─ package.json
+│  ├─ package-lock.json   # npm lockfile
 │  ├─ tsconfig.json
 │  ├─ next.config.js
+│  ├─ tailwind.config.js  # Tailwind CSS configuration
+│  ├─ postcss.config.js   # PostCSS configuration
+│  ├─ next-env.d.ts       # Next.js type definitions
 │  └─ Dockerfile
 ├─ data/                  # sample policy docs
-├─ docker-compose.yml
-├─ Makefile
-└─ .env.example
+├─ docker-compose.yml     # main compose file (production-like)
+├─ docker-compose.dev.yml # dev overrides (hot-reload volumes)
+├─ docker-compose.test.yml # test overrides (bind-mount for pytest)
+├─ Makefile               # convenience commands (dev, dev-hot, test, test-hot)
+├─ .env.example           # environment variable template
 ```
 
 ## Tests
@@ -89,12 +107,24 @@ docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm backend
 ---
 
 ## Current Enhancements & Guardrails
+
+### Backend Enhancements
 - **Deterministic chunk IDs + dedupe** — `QdrantStore.upsert` now converts chunk hashes into UUIDs and `RAGEngine` tracks `_chunk_hashes`, so re-ingesting the same docs is a no-op (no duplicate points, accurate `indexed_docs/chunks`, stable metrics).
 - **MMR reranking for retrieval quality** — `RAGEngine.retrieve()` now applies Maximal Marginal Relevance (MMR) reranking to balance relevance and diversity. Fetches 2x candidates initially, then reranks to avoid redundant chunks while keeping the most relevant results. Lambda parameter (0.7) favors relevance over pure diversity. Only exact duplicates (same title + section) are penalized, allowing different sections from the same document to both be included when relevant.
 - **Layered automated coverage** — Test suite reorganized into unit vs integration:
   - Unit layer protects deterministic building blocks (`_hash_to_uuid`, chunking, doc loaders, metrics math), and is easy to extend as more logic gets isolated.
   - Integration layer covers ingest idempotency, metrics, acceptance queries, Qdrant-down fallback, ingest error-path (JSON + CORS), and a mocked OpenAI-mode smoke test so provider switching is guarded without real API calls.
-- **Acceptance checks baked into tests** — `tests/integration/test_acceptance_queries.py` programmatically verifies the “damaged blender” and “East Malaysia SLA” prompts cite the mandated documents and contain required content (e.g., “bulky items” mention), matching the rubric expectations.
+- **Acceptance checks baked into tests** — `tests/integration/test_acceptance_queries.py` programmatically verifies the "damaged blender" and "East Malaysia SLA" prompts cite the mandated documents and contain required content (e.g., "bulky items" mention), matching the rubric expectations.
+
+### Frontend Enhancements
+- **Toast notification system** — Global toast notifications (top-center) provide user feedback for all async operations (ingestion, ask queries, errors). Auto-dismisses after 5 seconds with manual dismiss option. Three variants: success (green), error (red), info (blue) with appropriate icons from `lucide-react`.
+- **Enhanced error handling** — API client (`lib/api.ts`) extracts detailed error messages from FastAPI responses (checks `detail` and `message` fields), providing actionable feedback instead of generic "Request failed" messages. Errors are shown both in toasts and inline in chat.
+- **Improved citation UX** — Citation badges now feature icons, subtle color accents, and better visual hierarchy. Chunk expansion uses toggle buttons with chevron indicators, showing chunk count. Expanded chunks display in formatted cards with clear title/section separation.
+- **Metrics visualization** — `MetricsDisplay` component shows all backend metrics in a responsive 2x2 grid with color-coded cards (blue for docs, purple for chunks, green for questions, indigo/amber for vector store). Each card includes an icon and formatted numbers. Raw JSON available in collapsible debug section.
+- **Loading states & accessibility** — All buttons show loading spinners during async operations. Inputs are disabled during loading to prevent duplicate submissions. Full keyboard navigation support (Enter to send, Shift+Enter for newline). ARIA labels on all interactive elements. Visible focus states with ring indicators.
+- **Responsive design & typography** — Mobile-first responsive layout using Tailwind CSS breakpoints. Improved typography scale, spacing, and touch targets. Chat messages use max-width constraints and proper text wrapping. Metrics grid adapts from 1 column (mobile) to 2 columns (desktop).
+- **Type-safe API layer** — TypeScript interfaces (`AskResponse`, `MetricsResponse`, `IngestResponse`) match backend Pydantic models exactly, ensuring compile-time type safety and preventing field name mismatches.
+- **Modern styling system** — Migrated from inline styles to Tailwind CSS with semantic color tokens via CSS variables. Enables easy theming and consistent design system. Custom animations for toasts and loading spinners defined in `globals.css`.
 
 ## Candidate Instructions (Read Me First)
 
@@ -179,12 +209,47 @@ npm run dev
 
 ### UI Walkthrough
 1. Open **http://localhost:3000**.
-2. In **Admin** card, click **Ingest sample docs** and then **Refresh metrics**.
-3. In **Chat**, ask questions. Click the **source badges** to expand supporting chunks.
+2. In **Admin** panel:
+   - Click **Ingest sample docs** button (shows loading spinner during indexing)
+   - Success toast appears: "Documents ingested successfully"
+   - Metrics cards update automatically showing indexed documents and chunks count
+   - Click **Refresh metrics** to manually update
+   - View formatted metrics in color-coded cards or expand "View raw metrics (debug)" for JSON
+3. In **Chat** panel:
+   - Type a question and press Enter (or click Send button)
+   - User message appears in blue bubble on the right
+   - Loading indicator shows "Thinking..." while processing
+   - Assistant response appears in white card on the left with:
+     - Answer text
+     - Citation badges (with document icons) showing source documents
+     - "View supporting chunks" toggle button showing chunk count
+   - Click citation badges to see tooltip with section name
+   - Click "View supporting chunks" to expand/collapse underlying chunk text
+   - Success/error toasts appear at top-center for feedback
+4. **Accessibility features**:
+   - All buttons have ARIA labels
+   - Keyboard navigation: Tab to navigate, Enter to submit
+   - Focus states visible with ring indicators
+   - Screen reader friendly with semantic HTML
 
 ### What You Can Modify
 - Anything. Improve chunking, reranking (MMR), prompt, UI polish, streaming, caching, guardrails (PDPA masking), feedback logging, small eval script, etc.
 - Keep the one-command run and README accurate.
+
+### Frontend Tech Stack
+- **Next.js 14** — React framework with App Router
+- **TypeScript** — Type-safe development with interfaces matching backend models
+- **Tailwind CSS** — Utility-first CSS framework with semantic color tokens
+- **lucide-react** — Icon library for consistent visual language
+- **React Context** — Toast state management via `ToastProvider`
+- **Custom hooks** — `useToast()` for accessing toast functionality throughout the app
+
+### Frontend Architecture
+- **Component structure**: Modular components (`Chat`, `AdminPanel`, `MetricsDisplay`, `Toast`) with clear separation of concerns
+- **State management**: React hooks (`useState`, `useCallback`, `useRef`) for local state; Context API for global toast state
+- **API layer**: Type-safe client in `lib/api.ts` with centralized error handling
+- **Styling**: Tailwind utility classes with CSS variables for theming; custom animations in `globals.css`
+- **Accessibility**: ARIA labels, keyboard navigation, focus states, semantic HTML throughout
 
 ### Constraints & Notes
 - Keep keys out of the frontend.

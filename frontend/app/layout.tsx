@@ -1,12 +1,18 @@
+import React from 'react';
+import { ToastProvider } from '@/components/ToastProvider';
+import './globals.css';
+
 export const metadata = { title: 'AI Policy Helper' };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body>
-        <div style={{maxWidth: 900, margin: '0 auto', padding: 24}}>
-          {children}
-        </div>
+        <ToastProvider>
+          <div className="max-w-4xl mx-auto px-6 py-8">
+            {children}
+          </div>
+        </ToastProvider>
       </body>
     </html>
   );
