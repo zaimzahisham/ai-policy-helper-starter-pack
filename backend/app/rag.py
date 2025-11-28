@@ -166,6 +166,44 @@ class RAGEngine:
         self._chunk_hashes = set()
         self._chunk_count = 0
 
+    def _mmr_rerank(self, candidates: List[Tuple[float, Dict]], k: int, lambda_param: float = 0.7) -> List[Dict]:
+        """
+        Maximal Marginal Relevance reranking.
+        lambda_param: 1.0 = pure relevance, 0.0 = pure diversity
+        """
+        if not candidates or k >= len(candidates):
+            return [meta for _, meta in candidates[:k]]
+        
+        selected = []
+        remaining = list(candidates)
+        
+        # Start with highest-scoring result
+        best_score, best_meta = remaining.pop(0)
+        selected.append(best_meta)
+        
+        while len(selected) < k and remaining:
+            best_mmr = -float('inf')
+            best_idx = 0
+            
+            for idx, (score, meta) in enumerate(remaining):
+                # Compute max similarity to already-selected chunks
+                max_sim = 0.0
+                for sel in selected:
+                    # Simple diversity: penalize same title+section
+                    if sel.get("title") == meta.get("title") and sel.get("section") == meta.get("section"):
+                        max_sim = 1.0  # same chunk
+                    # else: different chunks are always diverse, even from same doc
+                
+                # MMR score: lambda * relevance - (1-lambda) * diversity_penalty
+                mmr_score = lambda_param * score - (1 - lambda_param) * max_sim
+                if mmr_score > best_mmr:
+                    best_mmr = mmr_score
+                    best_idx = idx
+            
+            selected.append(remaining.pop(best_idx)[1])
+        
+        return selected
+
     def ingest_chunks(self, chunks: List[Dict]) -> Tuple[int, int]:
         vectors = []
         metas = []
@@ -197,9 +235,10 @@ class RAGEngine:
     def retrieve(self, query: str, k: int = 4) -> List[Dict]:
         t0 = time.time()
         qv = self.embedder.embed(query)
-        results = self.store.search(qv, k=k)
+        candidates = self.store.search(qv, k=k * 2) 
+        reranked_results = self._mmr_rerank(candidates, k, lambda_param=0.7)
         self.metrics.add_retrieval((time.time()-t0)*1000.0)
-        return [meta for score, meta in results]
+        return reranked_results
 
     def generate(self, query: str, contexts: List[Dict]) -> str:
         t0 = time.time()

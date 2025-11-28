@@ -90,10 +90,11 @@ docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm backend
 
 ## Current Enhancements & Guardrails
 - **Deterministic chunk IDs + dedupe** — `QdrantStore.upsert` now converts chunk hashes into UUIDs and `RAGEngine` tracks `_chunk_hashes`, so re-ingesting the same docs is a no-op (no duplicate points, accurate `indexed_docs/chunks`, stable metrics).
+- **MMR reranking for retrieval quality** — `RAGEngine.retrieve()` now applies Maximal Marginal Relevance (MMR) reranking to balance relevance and diversity. Fetches 2x candidates initially, then reranks to avoid redundant chunks while keeping the most relevant results. Lambda parameter (0.7) favors relevance over pure diversity. Only exact duplicates (same title + section) are penalized, allowing different sections from the same document to both be included when relevant.
 - **Layered automated coverage** — Test suite reorganized into unit vs integration:
   - Unit layer protects deterministic building blocks (`_hash_to_uuid`, chunking, doc loaders, metrics math), and is easy to extend as more logic gets isolated.
   - Integration layer covers ingest idempotency, metrics, acceptance queries, Qdrant-down fallback, ingest error-path (JSON + CORS), and a mocked OpenAI-mode smoke test so provider switching is guarded without real API calls.
-- **Acceptance checks baked into tests** — `tests/integration/test_acceptance_queries.py` programmatically verifies the “damaged blender” and “East Malaysia SLA” prompts cite the mandated documents, matching the rubric expectations.
+- **Acceptance checks baked into tests** — `tests/integration/test_acceptance_queries.py` programmatically verifies the “damaged blender” and “East Malaysia SLA” prompts cite the mandated documents and contain required content (e.g., “bulky items” mention), matching the rubric expectations.
 
 ## Candidate Instructions (Read Me First)
 
