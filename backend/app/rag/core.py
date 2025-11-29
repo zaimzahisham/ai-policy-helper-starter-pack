@@ -5,7 +5,7 @@ import os
 from typing import List, Dict, Tuple
 from .embedders import LocalEmbedder
 from .stores import InMemoryStore, QdrantStore
-from .llms import StubLLM, OpenAILLM
+from .llms import StubLLM, OpenAILLM, OllamaLLM
 from ..settings import settings
 from ..ingest.utils import doc_hash
 
@@ -58,6 +58,9 @@ class RAGEngine:
             self.agent_guide = ""
             logger.debug(f"Agent guide not found at {guide_path}, using empty guide")
 
+        # Define base system prompt (shared across all LLMs for consistency)
+        self.system_prompt_base = "You are a helpful company policy assistant. Cite sources by title and section when relevant."
+
         # Define required output format (shared across all LLMs for consistency)
         self.required_output_format = (
             "You MUST respond in the following format:\n\n"
@@ -89,6 +92,7 @@ class RAGEngine:
             try:
                 self.llm = OpenAILLM(
                     api_key=settings.openai_api_key,
+                    system_prompt_base=self.system_prompt_base,
                     agent_guide=self.agent_guide,
                     required_output_format=self.required_output_format
                 )
@@ -96,6 +100,24 @@ class RAGEngine:
                 logger.info("Using OpenAI LLM provider (gpt-4o-mini)")
             except Exception as e:
                 logger.warning(f"OpenAI initialization failed, falling back to StubLLM: {str(e)}")
+                self.llm = StubLLM(
+                    agent_guide=self.agent_guide,
+                    required_output_format=self.required_output_format
+                )
+                self.llm_name = "stub"
+        elif settings.llm_provider == "ollama":
+            try:
+                self.llm = OllamaLLM(
+                    host=settings.ollama_host,
+                    model=settings.ollama_model,
+                    system_prompt_base=self.system_prompt_base,
+                    agent_guide=self.agent_guide,
+                    required_output_format=self.required_output_format
+                )
+                self.llm_name = f"ollama:{settings.ollama_model}"
+                logger.info(f"Using Ollama LLM provider ({settings.ollama_model})")
+            except Exception as e:
+                logger.warning(f"Ollama initialization failed, falling back to StubLLM: {str(e)}")
                 self.llm = StubLLM(
                     agent_guide=self.agent_guide,
                     required_output_format=self.required_output_format

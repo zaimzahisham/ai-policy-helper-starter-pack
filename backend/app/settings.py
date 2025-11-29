@@ -6,6 +6,7 @@ class Settings(BaseModel):
     llm_provider: str = os.getenv("LLM_PROVIDER", "stub")  # stub | openai | ollama
     openai_api_key: str | None = os.getenv("OPENAI_API_KEY")
     ollama_host: str = os.getenv("OLLAMA_HOST", "http://ollama:11434")
+    ollama_model: str = os.getenv("OLLAMA_MODEL", "qwen2.5:0.5b")  # Model to use with Ollama (e.g., qwen2.5:0.5b, llama3.2, mistral, llama2, phi3)
     vector_store: str = os.getenv("VECTOR_STORE", "qdrant")  # qdrant | memory
     collection_name: str = os.getenv("COLLECTION_NAME", "policy_helper")
     chunk_size: int = int(os.getenv("CHUNK_SIZE", "700"))

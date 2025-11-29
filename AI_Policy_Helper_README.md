@@ -32,11 +32,14 @@ curl -X POST http://localhost:8000/api/ask -H 'Content-Type: application/json' \
 
 The project includes a `Makefile` with convenient commands for common development tasks:
 
-- **`make dev`** — Production-like build and run. Runs `docker compose up --build` for a clean, production-style verification. Useful for final testing before submission.
+- **`make dev`** — Production-like build and run. Runs `docker compose up --build` for a clean, production-style verification. Useful for final testing before submission. When using native Ollama, the Docker Ollama service won't start (saves resources).
 - **`make dev-hot`** — Hot-reload development mode. Runs `docker compose -f docker-compose.yml -f docker-compose.dev.yml up`, bind-mounting `backend/app` and the frontend workspace so Uvicorn (`--reload`) and Next.js (`npm run dev`) hot-reload as you edit. Perfect for active development.
+- **`make dev-ollama`** — Start services with Docker Ollama enabled. Runs `docker compose --profile docker-ollama up --build`. Use this when you want to use Ollama in Docker instead of native Ollama.
 - **`make test`** — Run tests in container. Executes `docker compose run --rm backend pytest -q` for a reproducible test run against the last-built image.
 - **`make test-hot`** — Run tests with hot-reload. Executes `docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm backend pytest -q`, which bind-mounts `backend/app` during the test command so pytest sees your latest files without rebuilding. Ideal for TDD workflow.
-- **`make fmt`** — Format Python code. Runs `docker compose run --rm backend black app` to format all Python code in the backend using Black formatter.
+- **`make fmt`** — Format Python code. Runs `docker compose run --rm backend python -m black app` to format all Python code in the backend using Black formatter.
+- **`make ollama-pull MODEL=<model_name>`** — Pull an Ollama model in Docker. Example: `make ollama-pull MODEL=qwen2.5:0.5b`. Requires Docker Ollama to be running (use `make dev-ollama` first).
+- **`make ollama-list`** — List available Ollama models in Docker. Shows all models that have been pulled. Requires Docker Ollama to be running.
 
 ## Offline-friendly
 - If you **don’t** set an API key, the backend uses a **deterministic stub LLM** and a **built-in embedding** to keep everything fully local.
@@ -354,9 +357,77 @@ npm run dev
 ### Switching LLMs
 - Default is **stub** (deterministic, offline).
 - To use OpenAI: set `LLM_PROVIDER=openai` and `OPENAI_API_KEY` in `.env`. (You are required to demo with OpenAI, API key is provided)
-- To use Ollama: set `LLM_PROVIDER=stub` (keep stub) or extend `app/rag/llms.py` to add an `OllamaLLM` class following the same interface as `StubLLM` and `OpenAILLM`.
+- To use Ollama: 
+
+  **Option A: Using Native Ollama (Recommended on Mac)**
+  
+  > **Why native on Mac?** Docker Desktop on Mac doesn't support GPU acceleration, so Docker Ollama runs CPU-only and is slower. Native Ollama can use Mac's Metal GPU for faster inference.
+  
+  1. **Install Ollama** (if not already installed):
+     - Download from https://ollama.com/download
+     - Launch the Ollama app and verify it's running
+  
+  2. **Pull a model** (first time only):
+     ```bash
+     ollama pull qwen2.5:0.5b
+     # Or any other model: ollama pull <model_name>
+     ```
+  
+  3. **Configure `.env`**:
+     ```bash
+     LLM_PROVIDER=ollama
+     OLLAMA_HOST=http://host.docker.internal:11434
+     OLLAMA_MODEL=qwen2.5:0.5b  # Optional, defaults to qwen2.5:0.5b
+     ```
+  
+  4. **Start services**:
+     ```bash
+     docker compose down  # Optional: clean start
+     make dev
+     ```
+  
+  5. **Verify connection**: Check logs to confirm Ollama is being used:
+     ```bash
+     docker compose logs backend | grep -i ollama
+     ```
+     Should see: `"Using Ollama LLM provider (qwen2.5:0.5b)"`
+  
+  6. **Test the app**: Use the UI normally - ingest documents and ask questions
+
+  **Option B: Using Docker Ollama**
+  
+  > **Note**: Works on Mac but runs CPU-only (no GPU acceleration), so it's slower than native. Use this if you prefer everything containerized, or if you're on Linux with GPU support.
+  
+  1. **Configure `.env`**:
+     ```bash
+     LLM_PROVIDER=ollama
+     OLLAMA_MODEL=qwen2.5:0.5b  # Optional, defaults to qwen2.5:0.5b
+     # OLLAMA_HOST defaults to http://ollama:11434 (Docker service)
+     ```
+  
+  2. **Start services with Docker Ollama**:
+     ```bash
+     docker compose down  # Optional: clean start
+     make dev-ollama
+     # Or: docker compose --profile docker-ollama up --build
+     ```
+     > **Note**: The Ollama Docker service is now optional. Use `make dev-ollama` to start it, or `make dev` if using native Ollama.
+  
+  3. **Pull a model** (wait for services to start, first time only):
+     ```bash
+     make ollama-pull MODEL=qwen2.5:0.5b
+     # Or manually: docker compose --profile docker-ollama exec ollama ollama pull qwen2.5:0.5b
+     ```
+  
+  4. **Verify connection**: Check logs:
+     ```bash
+     docker compose logs backend | grep -i ollama
+     ```
+  
+  5. **Test the app**: Use the UI normally
+
 - All LLM providers receive the same `agent_guide` (internal SOP) and `required_output_format` for consistent behavior.
-- Please document any changes you make.
+- **Available models**: Check available models at https://ollama.com/library or run `ollama list` (native) / `make ollama-list` (Docker). Popular options: `qwen2.5:0.5b` (default, smallest), `llama3.2`, `mistral`, `llama2`, `phi3`.
 
 ### Vector Store
 - Default is **Qdrant** via Docker. Fallback is in-memory if Qdrant isn't available.
@@ -394,6 +465,13 @@ All configuration is done via environment variables in `.env`. Here's a complete
   - Your OpenAI API key for GPT-4o-mini
 - **`OLLAMA_HOST`** (default: `http://ollama:11434`)
   - Ollama server URL (if using Ollama provider)
+  - On Mac with native Ollama: use `http://host.docker.internal:11434`
+- **`OLLAMA_MODEL`** (default: `qwen2.5:0.5b`)
+  - Model name to use with Ollama (e.g., `qwen2.5:0.5b`, `llama3.2`, `mistral`, `llama2`, `phi3`)
+  - Model must be pulled first:
+    - Native Ollama: `ollama pull <model_name>`
+    - Docker Ollama: `docker compose exec ollama ollama pull <model_name>`
+  - Check available models: `ollama list` or visit https://ollama.com/library
 
 #### Vector Store Configuration
 - **`VECTOR_STORE`** (default: `qdrant`)
@@ -665,6 +743,7 @@ This section documents the enhancements and improvements made during the assessm
 - **Acceptance checks baked into tests** — `tests/integration/test_acceptance_queries.py` programmatically verifies the "damaged blender" and "East Malaysia SLA" prompts cite the mandated documents and contain required content (e.g., "bulky items" mention), matching the rubric expectations.
 - **Comprehensive logging with dual output** — Structured logging throughout the backend with configurable log levels (DEBUG, INFO, WARNING, ERROR). Logs are written to both console (stdout/stderr) for real-time viewing and optionally to rotating log files for persistence. File logging uses `RotatingFileHandler` (10MB per file, 5 backups) to prevent disk space issues. All key operations are logged: API requests/responses, RAG operations (ingestion, retrieval, generation), vector store operations, LLM calls, and errors with full stack traces. Logs include timestamps, module names, and contextual information (query previews, chunk counts, latencies) for effective debugging and monitoring. This enhances observability and aligns with production-ready practices.
 - **Hot-reload development workflow** — Added `make dev-hot` and `make test-hot` commands to improve developer experience. `make dev-hot` enables hot-reload for both backend (Uvicorn `--reload`) and frontend (Next.js `npm run dev`) by bind-mounting source directories, eliminating the need to rebuild containers during active development. `make test-hot` allows running tests with hot-reload, so pytest sees local file changes without rebuilding. These commands significantly speed up the development and testing cycle, improving productivity and enabling faster iteration.
+- **Ollama LLM provider integration** — Added support for Ollama as a local LLM provider option. Ollama can run as a Docker service or natively (recommended on Mac for GPU support). Provides access to open-source models (qwen2.5:0.5b default, llama3.2, mistral, etc.) for fully local inference. The `OllamaLLM` class uses OpenAI-compatible API via the OpenAI SDK, ensuring consistent behavior with system/user message split, internal SOP integration, and required output format. Supports configurable model selection via `OLLAMA_MODEL` environment variable. This enables fully offline RAG capabilities without requiring external API keys.
 
 ### Frontend Enhancements
 - **Toast notification system** — Global toast notifications (top-center) provide user feedback for all async operations (ingestion, ask queries, errors). Auto-dismisses after 5 seconds with manual dismiss option. Three variants: success (green), error (red), info (blue) with appropriate icons from `lucide-react`.
