@@ -23,7 +23,17 @@ def test_ingest_idempotent(client):
     assert second["indexed_docs"] == 0
     assert second["indexed_chunks"] == 0
 
-def test_metrics_after_ask(client):
+def test_metrics_after_ask(client, monkeypatch):
+    # Ensure stub mode is used for this test
+    monkeypatch.setenv("LLM_PROVIDER", "stub")
+    from app.settings import settings
+    settings.llm_provider = "stub"
+    # Reinitialize engine with stub mode
+    from app import rag
+    from app.api.routes import set_engine
+    rag_engine = rag.RAGEngine()
+    set_engine(rag_engine)
+    
     client.post("/api/ingest")
     client.post("/api/ask", json={"query": "test question"})
     metrics = client.get("/api/metrics").json()
