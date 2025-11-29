@@ -1,6 +1,7 @@
 'use client';
 import React, { createContext, useContext, useState, useCallback } from 'react';
-import { apiMetrics, MetricsResponse } from '@/lib/api';
+import { apiMetrics } from '@/lib/api/client';
+import type { MetricsResponse } from '@/lib/types/api';
 
 interface MetricsContextType {
   metrics: MetricsResponse | null;

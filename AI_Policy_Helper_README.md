@@ -81,15 +81,22 @@ ai-policy-helper/
 │  │  ├─ layout.tsx       # root layout with ToastProvider
 │  │  └─ globals.css      # Tailwind directives + CSS variables + animations
 │  ├─ components/
-│  │  ├─ Chat.tsx         # chat interface with citations & chunk expansion
-│  │  ├─ AdminPanel.tsx   # ingestion controls + metrics display
-│  │  ├─ MetricsDisplay.tsx # formatted metrics visualization
-│  │  ├─ Toast.tsx        # toast notification component
+│  │  ├─ ui/              # reusable UI components
+│  │  │  └─ Toast.tsx      # toast notification component
+│  │  └─ features/        # feature-specific components
+│  │     ├─ Chat.tsx      # chat interface with citations & chunk expansion
+│  │     ├─ AdminPanel.tsx # ingestion controls + metrics display
+│  │     └─ MetricsDisplay.tsx # formatted metrics visualization
+│  ├─ contexts/            # React Context providers
 │  │  ├─ ToastProvider.tsx # toast context & state management
 │  │  └─ MetricsProvider.tsx # metrics context for shared state
 │  ├─ lib/
-│  │  ├─ api.ts           # type-safe API client with error handling
-│  │  └─ utils.ts         # className utility (cn)
+│  │  ├─ api/              # API client
+│  │  │  └─ client.ts      # type-safe API client with error handling
+│  │  ├─ utils/            # utilities
+│  │  │  └─ cn.ts          # className utility (clsx + tailwind-merge)
+│  │  └─ types/            # TypeScript type definitions
+│  │     └─ api.ts         # API request/response types (matches backend schemas)
 │  ├─ package.json
 │  ├─ package-lock.json   # npm lockfile
 │  ├─ tsconfig.json
@@ -228,14 +235,22 @@ Data Flow:
 
 ### Frontend Enhancements
 - **Toast notification system** — Global toast notifications (top-center) provide user feedback for all async operations (ingestion, ask queries, errors). Auto-dismisses after 5 seconds with manual dismiss option. Three variants: success (green), error (red), info (blue) with appropriate icons from `lucide-react`.
-- **Enhanced error handling** — API client (`lib/api.ts`) extracts detailed error messages from FastAPI responses (checks `detail` and `message` fields), providing actionable feedback instead of generic "Request failed" messages. Errors are shown both in toasts and inline in chat.
+- **Enhanced error handling** — API client (`lib/api/client.ts`) extracts detailed error messages from FastAPI responses (checks `detail` and `message` fields), providing actionable feedback instead of generic "Request failed" messages. Errors are shown both in toasts and inline in chat.
 - **Improved citation UX** — Citation badges now feature icons, subtle color accents, and better visual hierarchy. Chunk expansion uses toggle buttons with chevron indicators, showing chunk count. Expanded chunks display in formatted cards with clear title/section separation.
 - **Metrics visualization** — `MetricsDisplay` component shows all backend metrics in a responsive 2x2 grid with color-coded cards (blue for docs, purple for chunks, green for questions, indigo/amber for vector store). Each card includes an icon and formatted numbers. Raw JSON available in collapsible debug section.
 - **Real-time metrics updates** — `MetricsProvider` context manages shared metrics state across the app. When Chat asks questions, metrics (ask_count, latencies) update automatically in AdminPanel without manual refresh. Backend `/api/ask` endpoint includes full `MetricsResponse` in response, enabling seamless frontend updates.
 - **Loading states & accessibility** — All buttons show loading spinners during async operations. Inputs are disabled during loading to prevent duplicate submissions. Full keyboard navigation support (Enter to send, Shift+Enter for newline). ARIA labels on all interactive elements. Visible focus states with ring indicators.
 - **Responsive design & typography** — Mobile-first responsive layout using Tailwind CSS breakpoints. Improved typography scale, spacing, and touch targets. Chat messages use max-width constraints and proper text wrapping. Metrics grid adapts from 1 column (mobile) to 2 columns (desktop).
-- **Type-safe API layer** — TypeScript interfaces (`AskResponse`, `MetricsResponse`, `IngestResponse`) match backend Pydantic models exactly, ensuring compile-time type safety and preventing field name mismatches.
+- **Type-safe API layer** — TypeScript interfaces in `lib/types/api.ts` (`AskResponse`, `MetricsResponse`, `IngestResponse`, `Citation`, `Chunk`) match backend Pydantic models exactly, ensuring compile-time type safety and preventing field name mismatches.
 - **Modern styling system** — Migrated from inline styles to Tailwind CSS with semantic color tokens via CSS variables. Enables easy theming and consistent design system. Custom animations for toasts and loading spinners defined in `globals.css`.
+- **Modular code structure** — Frontend refactored into clear module boundaries for scalability:
+  - `components/ui/` — Reusable UI components (Toast)
+  - `components/features/` — Feature-specific components (Chat, AdminPanel, MetricsDisplay)
+  - `contexts/` — React Context providers (ToastProvider, MetricsProvider)
+  - `lib/api/` — API client with centralized error handling
+  - `lib/utils/` — Utility functions (className merging)
+  - `lib/types/` — Centralized TypeScript type definitions matching backend schemas
+  - This structure makes it easy to extend (add new features, components, API endpoints) and maintain clear separation of concerns.
 
 ## Candidate Instructions (Read Me First)
 
@@ -357,9 +372,15 @@ npm run dev
 - **Custom hooks** — `useToast()` for accessing toast functionality throughout the app
 
 ### Frontend Architecture
-- **Component structure**: Modular components (`Chat`, `AdminPanel`, `MetricsDisplay`, `Toast`) with clear separation of concerns
-- **State management**: React hooks (`useState`, `useCallback`, `useRef`) for local state; Context API for global toast state
-- **API layer**: Type-safe client in `lib/api.ts` with centralized error handling
+- **Modular component structure**: Organized into clear module boundaries:
+  - `components/ui/` — Reusable UI components (Toast)
+  - `components/features/` — Feature-specific components (Chat, AdminPanel, MetricsDisplay)
+  - `contexts/` — React Context providers (ToastProvider, MetricsProvider)
+  - `lib/api/` — API client (`client.ts`) with centralized error handling
+  - `lib/utils/` — Utility functions (`cn.ts` for className merging)
+  - `lib/types/` — TypeScript type definitions matching backend schemas
+- **State management**: React hooks (`useState`, `useCallback`, `useRef`) for local state; Context API for global state (toast notifications, metrics)
+- **Type safety**: TypeScript interfaces in `lib/types/api.ts` match backend Pydantic models exactly, ensuring compile-time type safety
 - **Styling**: Tailwind utility classes with CSS variables for theming; custom animations in `globals.css`
 - **Accessibility**: ARIA labels, keyboard navigation, focus states, semantic HTML throughout
 

@@ -1,10 +1,11 @@
 'use client';
 import React from 'react';
-import { apiAsk, MetricsResponse } from '@/lib/api';
-import { useToast } from './ToastProvider';
-import { useMetrics } from './MetricsProvider';
+import { apiAsk } from '@/lib/api/client';
+import type { MetricsResponse } from '@/lib/types/api';
+import { useToast } from '@/contexts/ToastProvider';
+import { useMetrics } from '@/contexts/MetricsProvider';
 import { Loader2, Send, FileText, ChevronDown, ChevronUp } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn } from '@/lib/utils/cn';
 
 type Message = {
   role: 'user' | 'assistant';

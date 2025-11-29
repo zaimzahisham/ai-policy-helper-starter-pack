@@ -1,11 +1,11 @@
 'use client';
 import React from 'react';
-import { apiIngest } from '@/lib/api';
-import { useToast } from './ToastProvider';
-import { useMetrics } from './MetricsProvider';
-import { MetricsDisplay } from './MetricsDisplay';
+import { apiIngest } from '@/lib/api/client';
+import { useToast } from '@/contexts/ToastProvider';
+import { useMetrics } from '@/contexts/MetricsProvider';
+import { MetricsDisplay } from '@/components/features/MetricsDisplay';
 import { Loader2, RefreshCw, Upload } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn } from '@/lib/utils/cn';
 
 export default function AdminPanel() {
   const { metrics, refreshMetrics } = useMetrics();

@@ -1,6 +1,6 @@
 import React from 'react';
-import { ToastProvider } from '@/components/ToastProvider';
-import { MetricsProvider } from '@/components/MetricsProvider';
+import { ToastProvider } from '@/contexts/ToastProvider';
+import { MetricsProvider } from '@/contexts/MetricsProvider';
 import './globals.css';
 
 export const metadata = { title: 'AI Policy Helper' };

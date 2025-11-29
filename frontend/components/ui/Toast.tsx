@@ -1,7 +1,7 @@
 'use client';
 import React from 'react';
 import { X, CheckCircle2, AlertCircle, Info } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn } from '@/lib/utils/cn';
 
 export type ToastType = 'success' | 'error' | 'info';
 

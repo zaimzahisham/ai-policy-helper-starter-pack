@@ -1,8 +1,8 @@
 'use client';
 import React from 'react';
 import { FileText, Brain, MessageSquare, Clock } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { MetricsResponse } from '@/lib/api';
+import { cn } from '@/lib/utils/cn';
+import type { MetricsResponse } from '@/lib/types/api';
 
 interface MetricsDisplayProps {
   metrics: MetricsResponse;
