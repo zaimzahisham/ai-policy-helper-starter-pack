@@ -1,13 +1,14 @@
 'use client';
 import React from 'react';
-import { apiIngest, apiMetrics, MetricsResponse } from '@/lib/api';
+import { apiIngest } from '@/lib/api';
 import { useToast } from './ToastProvider';
+import { useMetrics } from './MetricsProvider';
 import { MetricsDisplay } from './MetricsDisplay';
 import { Loader2, RefreshCw, Upload } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export default function AdminPanel() {
-  const [metrics, setMetrics] = React.useState<MetricsResponse | null>(null);
+  const { metrics, refreshMetrics } = useMetrics();
   const [busy, setBusy] = React.useState(false);
   const [refreshing, setRefreshing] = React.useState(false);
   const { showToast } = useToast();
@@ -15,8 +16,7 @@ export default function AdminPanel() {
   const refresh = async () => {
     setRefreshing(true);
     try {
-      const m = await apiMetrics();
-      setMetrics(m);
+      await refreshMetrics();
     } catch (e: any) {
       showToast(`Failed to fetch metrics: ${e.message}`, 'error');
     } finally {
@@ -28,7 +28,7 @@ export default function AdminPanel() {
     setBusy(true);
     try {
       await apiIngest();
-      await refresh();
+      await refreshMetrics(); // Refresh metrics after ingestion
       showToast('Documents ingested successfully', 'success');
     } catch (e: any) {
       showToast(`Ingestion failed: ${e.message}`, 'error');
@@ -37,9 +37,7 @@ export default function AdminPanel() {
     }
   };
 
-  React.useEffect(() => {
-    refresh();
-  }, []);
+  // Metrics are now managed by MetricsProvider, no need to fetch on mount
 
   return (
     <div className="bg-card border border-border rounded-xl p-6 shadow-sm">

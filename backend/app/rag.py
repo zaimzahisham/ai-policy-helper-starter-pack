@@ -141,11 +141,13 @@ class RAGEngine:
     def __init__(self):
         self.embedder = LocalEmbedder(dim=384)
         # Vector store selection
+        self._fallback_used = False
         if settings.vector_store == "qdrant":
             try:
                 self.store = QdrantStore(collection=settings.collection_name, dim=384)
             except Exception:
                 self.store = InMemoryStore(dim=384)
+                self._fallback_used = True
         else:
             self.store = InMemoryStore(dim=384)
 
@@ -165,6 +167,7 @@ class RAGEngine:
         self._doc_titles = set()
         self._chunk_hashes = set()
         self._chunk_count = 0
+        self._ask_count = 0
 
     def _mmr_rerank(self, candidates: List[Tuple[float, Dict]], k: int, lambda_param: float = 0.7) -> List[Dict]:
         """
@@ -244,6 +247,7 @@ class RAGEngine:
         t0 = time.time()
         answer = self.llm.generate(query, contexts)
         self.metrics.add_generation((time.time()-t0)*1000.0)
+        self._ask_count += 1
         return answer
 
     def stats(self) -> Dict:
@@ -251,6 +255,8 @@ class RAGEngine:
         return {
             "total_docs": len(self._doc_titles),
             "total_chunks": self._chunk_count,
+            "ask_count": self._ask_count,
+            "fallback_used": self._fallback_used,
             "embedding_model": settings.embedding_model,
             "llm_model": self.llm_name,
             **m

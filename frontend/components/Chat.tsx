@@ -1,7 +1,8 @@
 'use client';
 import React from 'react';
-import { apiAsk } from '@/lib/api';
+import { apiAsk, MetricsResponse } from '@/lib/api';
 import { useToast } from './ToastProvider';
+import { useMetrics } from './MetricsProvider';
 import { Loader2, Send, FileText, ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -18,6 +19,7 @@ export default function Chat() {
   const [loading, setLoading] = React.useState(false);
   const [expandedChunks, setExpandedChunks] = React.useState<Set<number>>(new Set());
   const { showToast } = useToast();
+  const { updateMetrics, refreshMetrics } = useMetrics();
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -42,6 +44,13 @@ export default function Chat() {
         chunks: res.chunks,
       };
       setMessages((m) => [...m, ai]);
+      
+      // Update metrics from the ask response (includes full MetricsResponse fields)
+      if (res.metrics && res.metrics.ask_count !== undefined) {
+        // res.metrics contains all MetricsResponse fields (from backend)
+        updateMetrics(res.metrics as Partial<MetricsResponse>);
+      }
+      
       showToast('Answer generated successfully', 'success');
     } catch (e: any) {
       const errorMsg = e.message || 'Failed to get answer';

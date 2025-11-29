@@ -29,8 +29,28 @@ def test_metrics_after_ask(client):
     metrics = client.get("/api/metrics").json()
     assert metrics["total_docs"] >= 1
     assert metrics["total_chunks"] >= 1
+    assert metrics["ask_count"] == 1
+    assert metrics["fallback_used"] is False  # Qdrant should be available in tests
     assert metrics["avg_retrieval_latency_ms"] >= 0
     assert metrics["llm_model"] == "stub"
+
+def test_ask_count_increments(client):
+    """Verify that ask_count increments correctly with multiple queries"""
+    client.post("/api/ingest")
+    # First ask
+    client.post("/api/ask", json={"query": "first question"})
+    metrics1 = client.get("/api/metrics").json()
+    assert metrics1["ask_count"] == 1
+    
+    # Second ask
+    client.post("/api/ask", json={"query": "second question"})
+    metrics2 = client.get("/api/metrics").json()
+    assert metrics2["ask_count"] == 2
+    
+    # Third ask
+    client.post("/api/ask", json={"query": "third question"})
+    metrics3 = client.get("/api/metrics").json()
+    assert metrics3["ask_count"] == 3
 
 def test_ingest_missing_data_dir(client, monkeypatch):
     from app.settings import settings

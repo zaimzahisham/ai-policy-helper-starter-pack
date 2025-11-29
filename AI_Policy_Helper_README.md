@@ -69,7 +69,8 @@ ai-policy-helper/
 │  │  ├─ AdminPanel.tsx   # ingestion controls + metrics display
 │  │  ├─ MetricsDisplay.tsx # formatted metrics visualization
 │  │  ├─ Toast.tsx        # toast notification component
-│  │  └─ ToastProvider.tsx # toast context & state management
+│  │  ├─ ToastProvider.tsx # toast context & state management
+│  │  └─ MetricsProvider.tsx # metrics context for shared state
 │  ├─ lib/
 │  │  ├─ api.ts           # type-safe API client with error handling
 │  │  └─ utils.ts         # className utility (cn)
@@ -101,6 +102,85 @@ docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm backend
   - `unit/` — fast checks for deterministic logic (chunking, hash→UUID, doc loaders, metrics math, etc.) so small building blocks stay correct.
   - `integration/` — end-to-end API scenarios (ingest, metrics, acceptance prompts, fallback, error paths, OpenAI provider) to ensure the deployed stack keeps working.
 
+## Architecture
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                         Frontend (Next.js)                     │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
+│  │   Chat UI    │  │ Admin Panel  │  │  Metrics Display     │  │
+│  │              │  │              │  │                      │  │
+│  │ - Ask Q&A    │  │ - Ingest     │  │ - Formatted Cards    │  │
+│  │ - Citations  │  │ - Refresh    │  │ - Raw JSON (debug)   │  │
+│  │ - Chunks     │  │              │  │                      │  │
+│  └──────┬───────┘  └──────┬───────┘  └──────────────────────┘  │
+│         │                 │                                    │
+│         └──────────┬──────┘                                    │
+│                    │ HTTP/REST                                 │
+│                    ▼                                           │
+│         ┌──────────────────────┐                               │
+│         │   API Client (TS)     │                              │
+│         │  - Type-safe calls    │                              │
+│         │  - Error handling     │                              │
+│         └──────────┬────────────┘                              │
+└────────────────────┼───────────────────────────────────────────┘
+                     │
+                     │ HTTP/REST
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    Backend (FastAPI)                            │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │                    API Endpoints                         │   │
+│  │  - POST /api/ingest  → Load & chunk documents            │   │
+│  │  - POST /api/ask     → RAG query flow                    │   │
+│  │  - GET  /api/metrics → System statistics                 │   │
+│  │  - GET  /api/health  → Health check                      │   │
+│  └──────────────────────┬───────────────────────────────────┘   │
+│                          │                                      │
+│         ┌─────────────────┼─────────────────┐                   │
+│         │                 │                 │                   │
+│         ▼                 ▼                 ▼                   │
+│  ┌──────────┐    ┌──────────────┐   ┌──────────────┐            │
+│  │  Ingest  │    │   RAGEngine  │   │   Metrics    │            │
+│  │          │    │              │   │              │            │
+│  │ - Load   │    │ - Embed      │   │ - Latencies  │            │
+│  │ - Chunk  │    │ - Retrieve   │   │ - Counts     │            │
+│  │ - Hash   │    │ - Rerank     │   │ - Fallback   │            │
+│  └────┬─────┘    │ - Generate   │   └──────────────┘            │
+│       │          └──────┬────────┘                              │
+│       │                 │                                       │
+│       │                 │                                       │
+│       │    ┌────────────┼────────────┐                          │
+│       │    │            │            │                          │
+│       ▼    ▼            ▼            ▼                          │
+│  ┌──────────┐  ┌──────────────┐  ┌──────────────┐               │
+│  │ Local    │  │  Vector      │  │  LLM         │               │
+│  │ Embedder │  │  Store       │  │  Provider    │               │
+│  │          │  │              │  │              │               │
+│  │ - Hash-  │  │ - Qdrant     │  │ - StubLLM    │               │
+│  │   based  │  │   (primary)  │  │   (default)  │               │
+│  │ - 384dim │  │ - InMemory   │  │ - OpenAILLM  │               │
+│  │          │  │   (fallback) │  │   (optional) │               │
+│  └──────────┘  └──────┬───────┘  └──────────────┘               │
+│                       │                                         │
+└───────────────────────┼─────────────────────────────────────────┘
+                        │
+                        │ gRPC/HTTP
+                        ▼
+         ┌───────────────────────────────┐
+         │    Qdrant (Vector DB)         │
+         │                               │
+         │  - Stores embeddings          │
+         │  - Cosine similarity search   │
+         │  - Collection: policy_helper  │
+         └───────────────────────────────┘
+
+Data Flow:
+1. Ingest: Documents → Chunk → Embed → Store (Qdrant/InMemory)
+2. Ask: Query → Embed → Search → Rerank (MMR) → Generate → Response
+3. Metrics: Track latencies, counts, fallback status
+```
+
 ## Notes
 - Keep it simple. For take-home, focus on correctness, citations, and clean code.
 
@@ -111,6 +191,7 @@ docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm backend
 ### Backend Enhancements
 - **Deterministic chunk IDs + dedupe** — `QdrantStore.upsert` now converts chunk hashes into UUIDs and `RAGEngine` tracks `_chunk_hashes`, so re-ingesting the same docs is a no-op (no duplicate points, accurate `indexed_docs/chunks`, stable metrics).
 - **MMR reranking for retrieval quality** — `RAGEngine.retrieve()` now applies Maximal Marginal Relevance (MMR) reranking to balance relevance and diversity. Fetches 2x candidates initially, then reranks to avoid redundant chunks while keeping the most relevant results. Lambda parameter (0.7) favors relevance over pure diversity. Only exact duplicates (same title + section) are penalized, allowing different sections from the same document to both be included when relevant.
+- **Enhanced metrics tracking** — `RAGEngine` now tracks `ask_count` (incremented in `generate()`) and `fallback_used` (set when Qdrant fails). Both fields included in `MetricsResponse` and returned in `/api/ask` response for real-time frontend updates.
 - **Layered automated coverage** — Test suite reorganized into unit vs integration:
   - Unit layer protects deterministic building blocks (`_hash_to_uuid`, chunking, doc loaders, metrics math), and is easy to extend as more logic gets isolated.
   - Integration layer covers ingest idempotency, metrics, acceptance queries, Qdrant-down fallback, ingest error-path (JSON + CORS), and a mocked OpenAI-mode smoke test so provider switching is guarded without real API calls.
@@ -121,6 +202,7 @@ docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm backend
 - **Enhanced error handling** — API client (`lib/api.ts`) extracts detailed error messages from FastAPI responses (checks `detail` and `message` fields), providing actionable feedback instead of generic "Request failed" messages. Errors are shown both in toasts and inline in chat.
 - **Improved citation UX** — Citation badges now feature icons, subtle color accents, and better visual hierarchy. Chunk expansion uses toggle buttons with chevron indicators, showing chunk count. Expanded chunks display in formatted cards with clear title/section separation.
 - **Metrics visualization** — `MetricsDisplay` component shows all backend metrics in a responsive 2x2 grid with color-coded cards (blue for docs, purple for chunks, green for questions, indigo/amber for vector store). Each card includes an icon and formatted numbers. Raw JSON available in collapsible debug section.
+- **Real-time metrics updates** — `MetricsProvider` context manages shared metrics state across the app. When Chat asks questions, metrics (ask_count, latencies) update automatically in AdminPanel without manual refresh. Backend `/api/ask` endpoint includes full `MetricsResponse` in response, enabling seamless frontend updates.
 - **Loading states & accessibility** — All buttons show loading spinners during async operations. Inputs are disabled during loading to prevent duplicate submissions. Full keyboard navigation support (Enter to send, Shift+Enter for newline). ARIA labels on all interactive elements. Visible focus states with ring indicators.
 - **Responsive design & typography** — Mobile-first responsive layout using Tailwind CSS breakpoints. Improved typography scale, spacing, and touch targets. Chat messages use max-width constraints and proper text wrapping. Metrics grid adapts from 1 column (mobile) to 2 columns (desktop).
 - **Type-safe API layer** — TypeScript interfaces (`AskResponse`, `MetricsResponse`, `IngestResponse`) match backend Pydantic models exactly, ensuring compile-time type safety and preventing field name mismatches.

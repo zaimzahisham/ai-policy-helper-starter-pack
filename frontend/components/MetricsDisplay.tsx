@@ -13,10 +13,7 @@ export function MetricsDisplay({ metrics }: MetricsDisplayProps) {
     return num.toLocaleString();
   };
 
-  // Use backend field names directly (total_docs, total_chunks)
-  // Note: ask_count and fallback_used are not in backend MetricsResponse
-  const isFallback = false; // Not tracked by backend, default to Qdrant
-
+  // Use backend field names directly (total_docs, total_chunks, ask_count, fallback_used)
   const metricCards = [
     {
       label: 'Indexed Documents',
@@ -32,15 +29,15 @@ export function MetricsDisplay({ metrics }: MetricsDisplayProps) {
     },
     {
       label: 'Questions Asked',
-      value: 'N/A', // Not tracked by backend MetricsResponse
+      value: formatNumber(metrics.ask_count),
       icon: MessageSquare,
       color: 'bg-green-50 text-green-700 border-green-200',
     },
     {
       label: 'Vector Store',
-      value: isFallback ? 'In-Memory (Fallback)' : 'Qdrant',
+      value: metrics.fallback_used ? 'In-Memory (Fallback)' : 'Qdrant',
       icon: Database,
-      color: isFallback
+      color: metrics.fallback_used
         ? 'bg-amber-50 text-amber-700 border-amber-200'
         : 'bg-indigo-50 text-indigo-700 border-indigo-200',
     },

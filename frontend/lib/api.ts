@@ -28,6 +28,8 @@ export interface MetricsResponse {
   // Matches backend/app/models.py MetricsResponse exactly
   total_docs: number;
   total_chunks: number;
+  ask_count: number;
+  fallback_used: boolean;
   avg_retrieval_latency_ms: number;
   avg_generation_latency_ms: number;
   embedding_model: string;

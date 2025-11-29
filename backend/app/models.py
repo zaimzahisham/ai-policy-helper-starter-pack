@@ -28,6 +28,8 @@ class AskResponse(BaseModel):
 class MetricsResponse(BaseModel):
     total_docs: int
     total_chunks: int
+    ask_count: int
+    fallback_used: bool
     avg_retrieval_latency_ms: float
     avg_generation_latency_ms: float
     embedding_model: str

@@ -47,13 +47,17 @@ def ask(req: AskRequest):
     citations = [Citation(title=c.get("title"), section=c.get("section")) for c in ctx]
     chunks = [Chunk(title=c.get("title"), section=c.get("section"), text=c.get("text")) for c in ctx]
     stats = engine.stats()
+    # Create MetricsResponse and convert to dict, then add legacy fields
+    metrics_dict = MetricsResponse(**stats).model_dump()
+    metrics_dict.update({
+        # Legacy fields for backward compatibility
+        "retrieval_ms": stats["avg_retrieval_latency_ms"],
+        "generation_ms": stats["avg_generation_latency_ms"],
+    })
     return AskResponse(
         query=req.query,
         answer=answer,
         citations=citations,
         chunks=chunks,
-        metrics={
-            "retrieval_ms": stats["avg_retrieval_latency_ms"],
-            "generation_ms": stats["avg_generation_latency_ms"],
-        }
+        metrics=metrics_dict
     )
