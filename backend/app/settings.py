@@ -11,5 +11,7 @@ class Settings(BaseModel):
     chunk_size: int = int(os.getenv("CHUNK_SIZE", "700"))
     chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "80"))
     data_dir: str = os.getenv("DATA_DIR", "/app/data")
+    log_level: str = os.getenv("LOG_LEVEL", "INFO")  # DEBUG | INFO | WARNING | ERROR
+    log_file_path: str | None = os.getenv("LOG_FILE_PATH")  # Optional: path to log file (e.g., /app/logs/app.log)
 
 settings = Settings()

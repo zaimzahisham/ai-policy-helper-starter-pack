@@ -1,4 +1,5 @@
 """RAG engine core: orchestration, metrics, and retrieval."""
+import logging
 import time
 import os
 from typing import List, Dict, Tuple
@@ -7,6 +8,8 @@ from .stores import InMemoryStore, QdrantStore
 from .llms import StubLLM, OpenAILLM
 from ..settings import settings
 from ..ingest.utils import doc_hash
+
+logger = logging.getLogger(__name__)
 
 
 class Metrics:
@@ -50,8 +53,10 @@ class RAGEngine:
         try:
             with open(guide_path, "r", encoding="utf-8") as f:
                 self.agent_guide = f.read()
+            logger.info(f"Loaded agent guide from {guide_path} ({len(self.agent_guide)} chars)")
         except FileNotFoundError:
             self.agent_guide = ""
+            logger.debug(f"Agent guide not found at {guide_path}, using empty guide")
 
         # Define required output format (shared across all LLMs for consistency)
         self.required_output_format = (
@@ -70,11 +75,14 @@ class RAGEngine:
         if settings.vector_store == "qdrant":
             try:
                 self.store = QdrantStore(collection=settings.collection_name, dim=384)
-            except Exception:
+                logger.info(f"Using Qdrant vector store (collection: {settings.collection_name})")
+            except Exception as e:
+                logger.warning(f"Qdrant initialization failed, falling back to InMemoryStore: {str(e)}")
                 self.store = InMemoryStore(dim=384)
                 self._fallback_used = True
         else:
             self.store = InMemoryStore(dim=384)
+            logger.info("Using InMemoryStore vector store")
 
         # LLM selection
         if settings.llm_provider == "openai" and settings.openai_api_key:
@@ -85,7 +93,9 @@ class RAGEngine:
                     required_output_format=self.required_output_format
                 )
                 self.llm_name = "openai:gpt-4o-mini"
-            except Exception:
+                logger.info("Using OpenAI LLM provider (gpt-4o-mini)")
+            except Exception as e:
+                logger.warning(f"OpenAI initialization failed, falling back to StubLLM: {str(e)}")
                 self.llm = StubLLM(
                     agent_guide=self.agent_guide,
                     required_output_format=self.required_output_format
@@ -97,6 +107,7 @@ class RAGEngine:
                 required_output_format=self.required_output_format
             )
             self.llm_name = "stub"
+            logger.info("Using StubLLM provider (deterministic, offline)")
 
         self.metrics = Metrics()
         self._doc_titles = set()
@@ -186,34 +197,46 @@ class RAGEngine:
         Returns:
             Tuple of (new_docs_count, new_chunks_count)
         """
-        vectors = []
-        metas = []
-        doc_titles_before = set(self._doc_titles)
+        try:
+            logger.debug(f"Starting ingestion of {len(chunks)} chunks")
+            vectors = []
+            metas = []
+            doc_titles_before = set(self._doc_titles)
 
-        for ch in chunks:
-            text = ch["text"]
-            h = doc_hash(text)
-            if h in self._chunk_hashes:
-                continue
-            self._chunk_hashes.add(h)
-            meta = {
-                "id": h,
-                "hash": h,
-                "title": ch["title"],
-                "section": ch.get("section"),
-                "text": text,
-                "heading_level": ch.get("heading_level", 0),
-                "section_priority": ch.get("section_priority", "low"),
-            }
-            v = self.embedder.embed(text)
-            vectors.append(v)
-            metas.append(meta)
-            self._doc_titles.add(ch["title"])
-            self._chunk_count += 1
+            for ch in chunks:
+                text = ch["text"]
+                h = doc_hash(text)
+                if h in self._chunk_hashes:
+                    continue
+                self._chunk_hashes.add(h)
+                meta = {
+                    "id": h,
+                    "hash": h,
+                    "title": ch["title"],
+                    "section": ch.get("section"),
+                    "text": text,
+                    "heading_level": ch.get("heading_level", 0),
+                    "section_priority": ch.get("section_priority", "low"),
+                }
+                v = self.embedder.embed(text)
+                vectors.append(v)
+                metas.append(meta)
+                self._doc_titles.add(ch["title"])
+                self._chunk_count += 1
 
-        if vectors:
-            self.store.upsert(vectors, metas)
-        return (len(self._doc_titles) - len(doc_titles_before), len(metas))
+            if vectors:
+                logger.debug(f"Upserting {len(vectors)} new vectors to store")
+                self.store.upsert(vectors, metas)
+            else:
+                logger.debug("No new vectors to upsert (all chunks already indexed)")
+            
+            new_docs = len(self._doc_titles) - len(doc_titles_before)
+            new_chunks = len(metas)
+            logger.info(f"Ingestion complete: {new_docs} new docs, {new_chunks} new chunks")
+            return (new_docs, new_chunks)
+        except Exception as e:
+            logger.error(f"Error during chunk ingestion: {str(e)}", exc_info=True)
+            raise
 
     def retrieve(self, query: str, k: int = 4) -> List[Dict]:
         """
@@ -226,12 +249,20 @@ class RAGEngine:
         Returns:
             List of reranked chunk metadata dictionaries
         """
-        t0 = time.time()
-        qv = self.embedder.embed(query)
-        candidates = self.store.search(qv, k=k * 2) 
-        reranked_results = self._mmr_rerank(candidates, k, lambda_param=0.7)
-        self.metrics.add_retrieval((time.time()-t0)*1000.0)
-        return reranked_results
+        try:
+            t0 = time.time()
+            logger.debug(f"Retrieving chunks for query (k={k})")
+            qv = self.embedder.embed(query)
+            candidates = self.store.search(qv, k=k * 2)
+            logger.debug(f"Found {len(candidates)} candidate chunks from vector search")
+            reranked_results = self._mmr_rerank(candidates, k, lambda_param=0.7)
+            elapsed_ms = (time.time()-t0)*1000.0
+            self.metrics.add_retrieval(elapsed_ms)
+            logger.debug(f"Retrieval complete: {len(reranked_results)} chunks after reranking ({elapsed_ms:.2f}ms)")
+            return reranked_results
+        except Exception as e:
+            logger.error(f"Error during retrieval: {str(e)}", exc_info=True)
+            raise
 
     def generate(self, query: str, contexts: List[Dict]) -> str:
         """
@@ -244,11 +275,19 @@ class RAGEngine:
         Returns:
             Generated answer string
         """
-        t0 = time.time()
-        answer = self.llm.generate(query, contexts)
-        self.metrics.add_generation((time.time()-t0)*1000.0)
-        self._ask_count += 1
-        return answer
+        try:
+            t0 = time.time()
+            logger.debug(f"Generating answer with {len(contexts)} context chunks (LLM: {self.llm_name})")
+            answer = self.llm.generate(query, contexts)
+            elapsed_ms = (time.time()-t0)*1000.0
+            self.metrics.add_generation(elapsed_ms)
+            self._ask_count += 1
+            logger.debug(f"Generation complete: {len(answer)} chars ({elapsed_ms:.2f}ms)")
+            return answer
+        except Exception as e:
+            logger.error(f"Error during generation: {str(e)}", exc_info=True)
+            self._ask_count += 1  # Still increment even on error for metrics accuracy
+            raise
 
     def stats(self) -> Dict:
         """

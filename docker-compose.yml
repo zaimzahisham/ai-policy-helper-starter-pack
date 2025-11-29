@@ -24,8 +24,12 @@ services:
       - COLLECTION_NAME=${COLLECTION_NAME:-policy_helper}
       - CHUNK_SIZE=${CHUNK_SIZE:-700}
       - CHUNK_OVERLAP=${CHUNK_OVERLAP:-80}
+      - DATA_DIR=${DATA_DIR:-/app/data}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FILE_PATH=${LOG_FILE_PATH:-}
     volumes:
       - ./data:/app/data:ro
+      - ./logs:/app/logs  # Mount logs directory for file logging
     ports:
       - "8000:8000"
     depends_on:

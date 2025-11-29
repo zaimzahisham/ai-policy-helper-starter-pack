@@ -1,5 +1,8 @@
 """LLM provider implementations."""
+import logging
 from typing import List, Dict
+
+logger = logging.getLogger(__name__)
 
 
 class StubLLM:
@@ -98,13 +101,20 @@ class OpenAILLM:
             sources_block += f"- {c.get('title')} | {c.get('section')}\n{c.get('text')[:600]}\n---\n"
         sources_block += "Write a concise, accurate answer grounded in the sources. If unsure, say so."
 
-        resp = self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": sources_block},
-            ],
-            temperature=0.1
-        )
-        return resp.choices[0].message.content
+        try:
+            logger.debug(f"Calling OpenAI API (model: gpt-4o-mini, context_chunks: {len(contexts)})")
+            resp = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": sources_block},
+                ],
+                temperature=0.1
+            )
+            answer = resp.choices[0].message.content
+            logger.debug(f"OpenAI API call successful (response length: {len(answer)} chars)")
+            return answer
+        except Exception as e:
+            logger.error(f"OpenAI API call failed: {str(e)}", exc_info=True)
+            raise
 

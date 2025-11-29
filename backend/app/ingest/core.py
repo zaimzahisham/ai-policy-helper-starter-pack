@@ -1,7 +1,10 @@
 """Core ingestion functions: document loading and chunk building."""
+import logging
 import os
 from typing import List, Dict
 from .helpers import _read_text_file, _md_sections, _detect_section_priority, chunk_text
+
+logger = logging.getLogger(__name__)
 
 
 def load_documents(data_dir: str) -> List[Dict]:
@@ -18,25 +21,42 @@ def load_documents(data_dir: str) -> List[Dict]:
         List of document dictionaries with title, section, text, heading_level, section_priority
     """
     docs = []
-    for fname in sorted(os.listdir(data_dir)):
-        # Treat Internal_SOP_Agent_Guide.md as agent instructions, not user-facing policy:
-        # it is loaded separately in the RAG engine and injected into the LLM prompt.
-        # We explicitly exclude it from normal retrieval/citations here.
-        if fname == "Internal_SOP_Agent_Guide.md":
-            continue
-        if not fname.lower().endswith((".md", ".txt")):
-            continue
-        path = os.path.join(data_dir, fname)
-        text = _read_text_file(path)
-        for section, body, heading_level in _md_sections(text):
-            section_priority = _detect_section_priority(section)
-            docs.append({
-                "title": fname,
-                "section": section,
-                "text": body,
-                "heading_level": heading_level,
-                "section_priority": section_priority
-            })
+    logger.info(f"Loading documents from {data_dir}")
+    try:
+        for fname in sorted(os.listdir(data_dir)):
+            # Treat Internal_SOP_Agent_Guide.md as agent instructions, not user-facing policy:
+            # it is loaded separately in the RAG engine and injected into the LLM prompt.
+            # We explicitly exclude it from normal retrieval/citations here.
+            if fname == "Internal_SOP_Agent_Guide.md":
+                logger.debug(f"Skipping {fname} (agent guide, not policy)")
+                continue
+            if not fname.lower().endswith((".md", ".txt")):
+                logger.debug(f"Skipping {fname} (not .md or .txt)")
+                continue
+            path = os.path.join(data_dir, fname)
+            try:
+                text = _read_text_file(path)
+                sections = list(_md_sections(text))
+                logger.debug(f"Loaded {fname}: {len(sections)} sections")
+                for section, body, heading_level in sections:
+                    section_priority = _detect_section_priority(section)
+                    docs.append({
+                        "title": fname,
+                        "section": section,
+                        "text": body,
+                        "heading_level": heading_level,
+                        "section_priority": section_priority
+                    })
+            except Exception as e:
+                logger.warning(f"Error loading file {fname}: {str(e)}", exc_info=True)
+                continue
+        logger.info(f"Successfully loaded {len(docs)} document sections from {len(set(d['title'] for d in docs))} files")
+    except FileNotFoundError:
+        logger.error(f"Data directory not found: {data_dir}")
+        raise
+    except Exception as e:
+        logger.error(f"Error loading documents from {data_dir}: {str(e)}", exc_info=True)
+        raise
     return docs
 
 

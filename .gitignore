@@ -5,3 +5,6 @@ backend/*/*/*/__pycache__/
 frontend/node_modules/
 frontend/.next/
 .env
+# Log files
+logs/*.log
+logs/*.log.*

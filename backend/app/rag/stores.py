@@ -1,9 +1,12 @@
 """Vector store implementations."""
+import logging
 from typing import List, Dict, Tuple
 import numpy as np
 from qdrant_client import QdrantClient, models as qm
 import uuid
 from ..shared.helpers import convert_to_uuid
+
+logger = logging.getLogger(__name__)
 
 
 class InMemoryStore:
@@ -77,11 +80,14 @@ class QdrantStore:
         """Create collection if it doesn't exist."""
         try:
             self.client.get_collection(self.collection)
-        except Exception:
+            logger.debug(f"Qdrant collection '{self.collection}' already exists")
+        except Exception as e:
+            logger.info(f"Creating Qdrant collection '{self.collection}' (dim={self.dim})")
             self.client.recreate_collection(
                 collection_name=self.collection,
                 vectors_config=qm.VectorParams(size=self.dim, distance=qm.Distance.COSINE)
             )
+            logger.info(f"Qdrant collection '{self.collection}' created successfully")
 
     def upsert(self, vectors: List[np.ndarray], metadatas: List[Dict]):
         """
@@ -93,12 +99,18 @@ class QdrantStore:
             vectors: List of embedding vectors
             metadatas: List of metadata dictionaries (must include "hash" key)
         """
-        points = []
-        for i, (v, m) in enumerate(zip(vectors, metadatas)):
-            # Convert hash to UUID format (Qdrant requires UUID point IDs)
-            point_id = convert_to_uuid(m["hash"]) if m.get("hash") else str(uuid.uuid4())
-            points.append(qm.PointStruct(id=point_id, vector=v.tolist(), payload=m))
-        self.client.upsert(collection_name=self.collection, points=points)
+        try:
+            logger.debug(f"Upserting {len(vectors)} points to Qdrant collection '{self.collection}'")
+            points = []
+            for i, (v, m) in enumerate(zip(vectors, metadatas)):
+                # Convert hash to UUID format (Qdrant requires UUID point IDs)
+                point_id = convert_to_uuid(m["hash"]) if m.get("hash") else str(uuid.uuid4())
+                points.append(qm.PointStruct(id=point_id, vector=v.tolist(), payload=m))
+            self.client.upsert(collection_name=self.collection, points=points)
+            logger.debug(f"Successfully upserted {len(points)} points to Qdrant")
+        except Exception as e:
+            logger.error(f"Error upserting to Qdrant: {str(e)}", exc_info=True)
+            raise
 
     def search(self, query: np.ndarray, k: int = 4) -> List[Tuple[float, Dict]]:
         """
@@ -111,14 +123,20 @@ class QdrantStore:
         Returns:
             List of (score, metadata) tuples, sorted by similarity (descending)
         """
-        res = self.client.search(
-            collection_name=self.collection,
-            query_vector=query.tolist(),
-            limit=k,
-            with_payload=True
-        )
-        out = []
-        for r in res:
-            out.append((float(r.score), dict(r.payload)))
-        return out
+        try:
+            logger.debug(f"Searching Qdrant collection '{self.collection}' for k={k}")
+            res = self.client.search(
+                collection_name=self.collection,
+                query_vector=query.tolist(),
+                limit=k,
+                with_payload=True
+            )
+            out = []
+            for r in res:
+                out.append((float(r.score), dict(r.payload)))
+            logger.debug(f"Qdrant search returned {len(out)} results")
+            return out
+        except Exception as e:
+            logger.error(f"Error searching Qdrant: {str(e)}", exc_info=True)
+            raise
 

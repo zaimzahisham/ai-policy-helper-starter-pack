@@ -106,6 +106,8 @@ ai-policy-helper/
 │  ├─ next-env.d.ts       # Next.js type definitions
 │  └─ Dockerfile
 ├─ data/                  # sample policy docs
+├─ logs/                  # log files (created when LOG_FILE_PATH is set)
+│  └─ app.log             # rotating log file (if file logging enabled)
 ├─ docker-compose.yml     # main compose file (production-like)
 ├─ docker-compose.dev.yml # dev overrides (hot-reload volumes)
 ├─ docker-compose.test.yml # test overrides (bind-mount for pytest)
@@ -232,6 +234,7 @@ Data Flow:
   - `app/shared/` — Shared utilities (convert_to_uuid)
   - This structure makes it easy to extend (add routes, new LLM providers, new stores) and test components in isolation.
 - **Acceptance checks baked into tests** — `tests/integration/test_acceptance_queries.py` programmatically verifies the "damaged blender" and "East Malaysia SLA" prompts cite the mandated documents and contain required content (e.g., "bulky items" mention), matching the rubric expectations.
+- **Comprehensive logging with dual output** — Structured logging throughout the backend with configurable log levels (DEBUG, INFO, WARNING, ERROR). Logs are written to both console (stdout/stderr) for real-time viewing and optionally to rotating log files for persistence. File logging uses `RotatingFileHandler` (10MB per file, 5 backups) to prevent disk space issues. All key operations are logged: API requests/responses, RAG operations (ingestion, retrieval, generation), vector store operations, LLM calls, and errors with full stack traces. Logs include timestamps, module names, and contextual information (query previews, chunk counts, latencies) for effective debugging and monitoring. This enhances observability and aligns with production-ready practices.
 
 ### Frontend Enhancements
 - **Toast notification system** — Global toast notifications (top-center) provide user feedback for all async operations (ingestion, ask queries, errors). Auto-dismisses after 5 seconds with manual dismiss option. Three variants: success (green), error (red), info (blue) with appropriate icons from `lucide-react`.
@@ -321,8 +324,17 @@ npm run dev
 - Please document any changes you make.
 
 ### Vector Store
-- Default is **Qdrant** via Docker. Fallback is in-memory if Qdrant isn’t available.
+- Default is **Qdrant** via Docker. Fallback is in-memory if Qdrant isn't available.
 - To switch to in-memory explicitly: `VECTOR_STORE=memory` in `.env`.
+
+### Logging Configuration
+- **Log Level**: Set `LOG_LEVEL` in `.env` (options: `DEBUG`, `INFO`, `WARNING`, `ERROR`). Default is `INFO`.
+- **File Logging**: Optionally set `LOG_FILE_PATH` in `.env` (e.g., `/app/logs/app.log`) to enable persistent file logging alongside console output. Log files are automatically rotated (10MB per file, 5 backups) to prevent disk space issues. The log directory is automatically created if it doesn't exist.
+- **Log Location**: When `LOG_FILE_PATH` is set, logs are written to both console (visible in `docker compose logs`) and the specified file. Log files are accessible from the host at `./logs/` (mounted volume).
+- **Viewing Logs**:
+  - Console: `docker compose logs -f backend`
+  - File: `tail -f logs/app.log` (if `LOG_FILE_PATH` is set)
+- All operations are logged: API requests, ingestion, retrieval, generation, errors, and configuration details.
 
 ### API Reference
 - `POST /api/ingest` → `{ indexed_docs, indexed_chunks }`
@@ -393,6 +405,8 @@ npm run dev
 - **Qdrant healthcheck failing**: ensure port `6333` is free; re-run compose.
 - **CORS**: CORS is configured to `*` in `main.py` for local dev.
 - **Embeddings/LLM**: With no keys, stub models run by default so the app always works.
+- **Log files not created**: Ensure `LOG_FILE_PATH` is set in `.env` and the path is accessible. Check that `docker-compose.yml` includes the `LOG_FILE_PATH` environment variable. Log files are created in the container at the specified path and accessible from the host via the `./logs` volume mount.
+- **Viewing logs**: Use `docker compose logs backend` for console logs, or `tail -f logs/app.log` for file logs (if `LOG_FILE_PATH` is configured).
 
 ### Submission
 - Share GitHub repo link + your short demo video.
