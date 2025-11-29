@@ -83,3 +83,16 @@ def test_metadata_enrichment_in_chunks(client):
     # For shipping SLA query, we should get Delivery_and_Shipping.md chunks
     assert has_sla_chunk or any("Delivery" in chunk.get("title", "") for chunk in chunks), \
         "SLA query should retrieve Delivery_and_Shipping.md chunks"
+
+
+def test_internal_sop_agent_guide_never_cited(client):
+    """
+    Internal_SOP_Agent_Guide.md is internal behavior guidance for the agent and should not be
+    part of user-facing citations.
+    """
+    client.post("/api/ingest")
+    resp = client.post("/api/ask", json={"query": "What is the refund window for small appliances?"})
+    assert resp.status_code == 200
+    data = resp.json()
+    titles = [c["title"] for c in data.get("citations", [])]
+    assert "Internal_SOP_Agent_Guide.md" not in titles

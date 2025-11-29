@@ -3,12 +3,15 @@ from app import rag
 
 def test_openai_mode_with_mock(monkeypatch, client):
     class FakeOpenAI:
-        def __init__(self, api_key):
+        def __init__(self, api_key, agent_guide: str | None = None, required_output_format: str | None = None):
             self.api_key = api_key
+            self.agent_guide = agent_guide or ""
+            self.required_output_format = required_output_format or ""
         def generate(self, query, contexts):
             return "mocked openai answer"
 
-    monkeypatch.setattr(rag, "OpenAILLM", lambda api_key: FakeOpenAI(api_key))
+    # Match OpenAILLM constructor signature (api_key, agent_guide, required_output_format)
+    monkeypatch.setattr(rag, "OpenAILLM", lambda api_key, agent_guide=None, required_output_format=None: FakeOpenAI(api_key, agent_guide, required_output_format))
     monkeypatch.setenv("LLM_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_API_KEY", "dummy")
 

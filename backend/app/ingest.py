@@ -58,6 +58,11 @@ def chunk_text(text: str, chunk_size: int, overlap: int) -> List[str]:
 def load_documents(data_dir: str) -> List[Dict]:
     docs = []
     for fname in sorted(os.listdir(data_dir)):
+        # Treat Internal_SOP_Agent_Guide.md as agent instructions, not user-facing policy:
+        # it is loaded separately in the RAG engine and injected into the LLM prompt.
+        # We explicitly exclude it from normal retrieval/citations here.
+        if fname == "Internal_SOP_Agent_Guide.md":
+            continue
         if not fname.lower().endswith((".md", ".txt")):
             continue
         path = os.path.join(data_dir, fname)

@@ -89,30 +89,71 @@ class QdrantStore:
 
 # ---- LLM provider ----
 class StubLLM:
+    def __init__(self, agent_guide: str | None = None, required_output_format: str | None = None):
+        # We accept agent_guide and required_output_format for API symmetry with OpenAILLM,
+        # but keep StubLLM output simple and deterministic.
+        self.agent_guide = agent_guide or ""
+        self.required_output_format = required_output_format or ""
+
     def generate(self, query: str, contexts: List[Dict]) -> str:
-        lines = [f"Answer (stub): Based on the following sources:"]
+        """
+        Stub output is formatted to match the contract we expect from real LLMs:
+        - Answer:  short direct answer
+        - Sources: bullet list of Title — Section
+        - Details: longer supporting text (truncated)
+        """
+        # Naive "answer" that just acknowledges the sources
+        answer_line = "Based on the policy documents below, here is a summary answer"
+
+        # Build sources list
+        source_lines = []
         for c in contexts:
             sec = c.get("section") or "Section"
-            lines.append(f"- {c.get('title')} — {sec}")
-        lines.append("Summary:")
-        # naive summary of top contexts
+            source_lines.append(f"- {c.get('title')} — {sec}")
+
+        # Naive summary of top contexts for Details section
         joined = " ".join([c.get("text", "") for c in contexts])
-        lines.append(joined[:600] + ("..." if len(joined) > 600 else ""))
+        details = joined[:600] + ("..." if len(joined) > 600 else "")
+
+        lines = [
+            "Answer (stub):",
+            answer_line,
+            "",
+            "Sources:",
+            *source_lines,
+            "",
+            "Details:",
+            details,
+        ]
         return "\n".join(lines)
 
 class OpenAILLM:
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, agent_guide: str | None = None, required_output_format: str | None = None):
         from openai import OpenAI
         self.client = OpenAI(api_key=api_key)
+        self.agent_guide = agent_guide or ""
+        self.required_output_format = required_output_format or ""
 
     def generate(self, query: str, contexts: List[Dict]) -> str:
-        prompt = f"You are a helpful company policy assistant. Cite sources by title and section when relevant.\nQuestion: {query}\nSources:\n"
+        # System instructions: base behavior + internal SOP + required output format
+        system_prompt = "You are a helpful company policy assistant. Cite sources by title and section when relevant."
+        if self.agent_guide:
+            system_prompt += "\n\nInternal SOP for agents:\n" + self.agent_guide
+        if self.required_output_format:
+            system_prompt += "\n\n" + self.required_output_format
+
+        # Build user-visible part of the prompt: question + sources
+        sources_block = f"Question: {query}\nSources:\n"
         for c in contexts:
-            prompt += f"- {c.get('title')} | {c.get('section')}\n{c.get('text')[:600]}\n---\n"
-        prompt += "Write a concise, accurate answer grounded in the sources. If unsure, say so."
+            sources_block += f"- {c.get('title')} | {c.get('section')}\n{c.get('text')[:600]}\n---\n"
+        sources_block += "Write a concise, accurate answer grounded in the sources. If unsure, say so."
+
         resp = self.client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role":"user","content":prompt}],
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": sources_block},
+            ],
             temperature=0.1
         )
         return resp.choices[0].message.content
@@ -140,6 +181,26 @@ class Metrics:
 class RAGEngine:
     def __init__(self):
         self.embedder = LocalEmbedder(dim=384)
+
+        # Load internal agent guide (if present) to be used as system instructions for LLMs.
+        guide_path = os.path.join(settings.data_dir, "Internal_SOP_Agent_Guide.md")
+        try:
+            with open(guide_path, "r", encoding="utf-8") as f:
+                self.agent_guide = f.read()
+        except FileNotFoundError:
+            self.agent_guide = ""
+
+        # Define required output format (shared across all LLMs for consistency)
+        self.required_output_format = (
+            "You MUST respond in the following format:\n\n"
+            "Answer:\n"
+            "<2-4 sentence direct answer for the user>\n\n"
+            "Sources:\n"
+            "- <Document_Title.md> — <Section>\n"
+            "- <Document_Title.md> — <Section>\n\n"
+            "Details:\n"
+            "<Any additional explanation or important policy notes>"
+        )
         # Vector store selection
         self._fallback_used = False
         if settings.vector_store == "qdrant":
@@ -154,13 +215,23 @@ class RAGEngine:
         # LLM selection
         if settings.llm_provider == "openai" and settings.openai_api_key:
             try:
-                self.llm = OpenAILLM(api_key=settings.openai_api_key)
+                self.llm = OpenAILLM(
+                    api_key=settings.openai_api_key,
+                    agent_guide=self.agent_guide,
+                    required_output_format=self.required_output_format
+                )
                 self.llm_name = "openai:gpt-4o-mini"
             except Exception:
-                self.llm = StubLLM()
+                self.llm = StubLLM(
+                    agent_guide=self.agent_guide,
+                    required_output_format=self.required_output_format
+                )
                 self.llm_name = "stub"
         else:
-            self.llm = StubLLM()
+            self.llm = StubLLM(
+                agent_guide=self.agent_guide,
+                required_output_format=self.required_output_format
+            )
             self.llm_name = "stub"
 
         self.metrics = Metrics()
