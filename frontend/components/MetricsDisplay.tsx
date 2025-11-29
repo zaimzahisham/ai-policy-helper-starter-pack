@@ -1,6 +1,6 @@
 'use client';
 import React from 'react';
-import { FileText, Hash, MessageSquare, Database } from 'lucide-react';
+import { FileText, Brain, MessageSquare, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { MetricsResponse } from '@/lib/api';
 
@@ -22,9 +22,9 @@ export function MetricsDisplay({ metrics }: MetricsDisplayProps) {
       color: 'bg-blue-50 text-blue-700 border-blue-200',
     },
     {
-      label: 'Chunks',
-      value: formatNumber(metrics.total_chunks),
-      icon: Hash,
+      label: 'AI Model',
+      value: metrics.llm_model,
+      icon: Brain,
       color: 'bg-purple-50 text-purple-700 border-purple-200',
     },
     {
@@ -34,12 +34,10 @@ export function MetricsDisplay({ metrics }: MetricsDisplayProps) {
       color: 'bg-green-50 text-green-700 border-green-200',
     },
     {
-      label: 'Vector Store',
-      value: metrics.fallback_used ? 'In-Memory (Fallback)' : 'Qdrant',
-      icon: Database,
-      color: metrics.fallback_used
-        ? 'bg-amber-50 text-amber-700 border-amber-200'
-        : 'bg-indigo-50 text-indigo-700 border-indigo-200',
+      label: 'Avg. Generation Latency',
+      value: `${metrics.avg_generation_latency_ms} ms`,
+      icon: Clock,
+      color: 'bg-amber-50 text-amber-700 border-amber-200'
     },
   ];
 
