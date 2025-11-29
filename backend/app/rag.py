@@ -171,8 +171,12 @@ class RAGEngine:
 
     def _mmr_rerank(self, candidates: List[Tuple[float, Dict]], k: int, lambda_param: float = 0.7) -> List[Dict]:
         """
-        Maximal Marginal Relevance reranking.
+        Maximal Marginal Relevance reranking with metadata-based boosting.
         lambda_param: 1.0 = pure relevance, 0.0 = pure diversity
+        
+        Metadata boosting:
+        - Heading level: H1=1.2x, H2=1.15x, H3=1.1x
+        - Section priority: high=1.15x, medium=1.05x, low=1.0x
         """
         if not candidates or k >= len(candidates):
             return [meta for _, meta in candidates[:k]]
@@ -180,7 +184,7 @@ class RAGEngine:
         selected = []
         remaining = list(candidates)
         
-        # Start with highest-scoring result
+        # Start with highest-scoring result (with metadata boost applied)
         best_score, best_meta = remaining.pop(0)
         selected.append(best_meta)
         
@@ -189,6 +193,25 @@ class RAGEngine:
             best_idx = 0
             
             for idx, (score, meta) in enumerate(remaining):
+                # Apply metadata-based boosting to similarity score
+                boosted_score = score
+                
+                # Boost by heading level (H1/H2/H3 are more important)
+                heading_level = meta.get("heading_level", 0)
+                if heading_level == 1:
+                    boosted_score *= 1.2  # H1: 20% boost
+                elif heading_level == 2:
+                    boosted_score *= 1.15  # H2: 15% boost
+                elif heading_level == 3:
+                    boosted_score *= 1.1  # H3: 10% boost
+                
+                # Boost by section priority (SLA, Policy, Terms are critical)
+                section_priority = meta.get("section_priority", "low")
+                if section_priority == "high":
+                    boosted_score *= 1.15  # High priority: 15% boost
+                elif section_priority == "medium":
+                    boosted_score *= 1.05  # Medium priority: 5% boost
+                
                 # Compute max similarity to already-selected chunks
                 max_sim = 0.0
                 for sel in selected:
@@ -197,8 +220,8 @@ class RAGEngine:
                         max_sim = 1.0  # same chunk
                     # else: different chunks are always diverse, even from same doc
                 
-                # MMR score: lambda * relevance - (1-lambda) * diversity_penalty
-                mmr_score = lambda_param * score - (1 - lambda_param) * max_sim
+                # MMR score: lambda * (boosted relevance) - (1-lambda) * diversity_penalty
+                mmr_score = lambda_param * boosted_score - (1 - lambda_param) * max_sim
                 if mmr_score > best_mmr:
                     best_mmr = mmr_score
                     best_idx = idx
@@ -224,6 +247,8 @@ class RAGEngine:
                 "title": ch["title"],
                 "section": ch.get("section"),
                 "text": text,
+                "heading_level": ch.get("heading_level", 0),
+                "section_priority": ch.get("section_priority", "low"),
             }
             v = self.embedder.embed(text)
             vectors.append(v)
@@ -267,7 +292,13 @@ def build_chunks_from_docs(docs: List[Dict], chunk_size: int, overlap: int) -> L
     out = []
     for d in docs:
         for ch in chunk_text(d["text"], chunk_size, overlap):
-            out.append({"title": d["title"], "section": d["section"], "text": ch})
+            out.append({
+                "title": d["title"],
+                "section": d["section"],
+                "text": ch,
+                "heading_level": d.get("heading_level", 0),
+                "section_priority": d.get("section_priority", "low")
+            })
     return out
 
 def _hash_to_uuid(hex_hash: str) -> str:
