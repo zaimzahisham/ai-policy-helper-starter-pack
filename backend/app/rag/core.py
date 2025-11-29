@@ -1,176 +1,31 @@
-import time, os, math, json, hashlib
+"""RAG engine core: orchestration, metrics, and retrieval."""
+import time
+import os
 from typing import List, Dict, Tuple
-import numpy as np
-from .settings import settings
-from .ingest import chunk_text, doc_hash
-from qdrant_client import QdrantClient, models as qm
-import uuid
+from .embedders import LocalEmbedder
+from .stores import InMemoryStore, QdrantStore
+from .llms import StubLLM, OpenAILLM
+from ..settings import settings
+from ..ingest.utils import doc_hash
 
-# ---- Simple local embedder (deterministic) ----
-def _tokenize(s: str) -> List[str]:
-    return [t.lower() for t in s.split()]
 
-class LocalEmbedder:
-    def __init__(self, dim: int = 384):
-        self.dim = dim
-
-    def embed(self, text: str) -> np.ndarray:
-        # Hash-based repeatable pseudo-embedding
-        h = hashlib.sha1(text.encode("utf-8")).digest()
-        rng_seed = int.from_bytes(h[:8], "big") % (2**32-1)
-        rng = np.random.default_rng(rng_seed)
-        v = rng.standard_normal(self.dim).astype("float32")
-        # L2 normalize
-        v = v / (np.linalg.norm(v) + 1e-9)
-        return v
-
-# ---- Vector store abstraction ----
-class InMemoryStore:
-    def __init__(self, dim: int = 384):
-        self.dim = dim
-        self.vecs: List[np.ndarray] = []
-        self.meta: List[Dict] = []
-        self._hashes = set()
-
-    def upsert(self, vectors: List[np.ndarray], metadatas: List[Dict]):
-        for v, m in zip(vectors, metadatas):
-            h = m.get("hash")
-            if h and h in self._hashes:
-                continue
-            self.vecs.append(v.astype("float32"))
-            self.meta.append(m)
-            if h:
-                self._hashes.add(h)
-
-    def search(self, query: np.ndarray, k: int = 4) -> List[Tuple[float, Dict]]:
-        if not self.vecs:
-            return []
-        A = np.vstack(self.vecs)  # [N, d]
-        q = query.reshape(1, -1)  # [1, d]
-        # cosine similarity
-        sims = (A @ q.T).ravel() / (np.linalg.norm(A, axis=1) * (np.linalg.norm(q) + 1e-9) + 1e-9)
-        idx = np.argsort(-sims)[:k]
-        return [(float(sims[i]), self.meta[i]) for i in idx]
-
-class QdrantStore:
-    def __init__(self, collection: str, dim: int = 384):
-        self.client = QdrantClient(url="http://qdrant:6333", timeout=10.0)
-        self.collection = collection
-        self.dim = dim
-        self._ensure_collection()
-
-    def _ensure_collection(self):
-        try:
-            self.client.get_collection(self.collection)
-        except Exception:
-            self.client.recreate_collection(
-                collection_name=self.collection,
-                vectors_config=qm.VectorParams(size=self.dim, distance=qm.Distance.COSINE)
-            )
-
-    def upsert(self, vectors: List[np.ndarray], metadatas: List[Dict]):
-        points = []
-        for i, (v, m) in enumerate(zip(vectors, metadatas)):
-            point_id = _hash_to_uuid(m["hash"]) if m.get("hash") else str(uuid.uuid4()) # ensure point_id is a valid UUID, otherwise qdrant will reject the point
-            points.append(qm.PointStruct(id=point_id, vector=v.tolist(), payload=m))
-        self.client.upsert(collection_name=self.collection, points=points)
-
-    def search(self, query: np.ndarray, k: int = 4) -> List[Tuple[float, Dict]]:
-        res = self.client.search(
-            collection_name=self.collection,
-            query_vector=query.tolist(),
-            limit=k,
-            with_payload=True
-        )
-        out = []
-        for r in res:
-            out.append((float(r.score), dict(r.payload)))
-        return out
-
-# ---- LLM provider ----
-class StubLLM:
-    def __init__(self, agent_guide: str | None = None, required_output_format: str | None = None):
-        # We accept agent_guide and required_output_format for API symmetry with OpenAILLM,
-        # but keep StubLLM output simple and deterministic.
-        self.agent_guide = agent_guide or ""
-        self.required_output_format = required_output_format or ""
-
-    def generate(self, query: str, contexts: List[Dict]) -> str:
-        """
-        Stub output is formatted to match the contract we expect from real LLMs:
-        - Answer:  short direct answer
-        - Sources: bullet list of Title — Section
-        - Details: longer supporting text (truncated)
-        """
-        # Naive "answer" that just acknowledges the sources
-        answer_line = "Based on the policy documents below, here is a summary answer"
-
-        # Build sources list
-        source_lines = []
-        for c in contexts:
-            sec = c.get("section") or "Section"
-            source_lines.append(f"- {c.get('title')} — {sec}")
-
-        # Naive summary of top contexts for Details section
-        joined = " ".join([c.get("text", "") for c in contexts])
-        details = joined[:600] + ("..." if len(joined) > 600 else "")
-
-        lines = [
-            "Answer (stub):",
-            answer_line,
-            "",
-            "Sources:",
-            *source_lines,
-            "",
-            "Details:",
-            details,
-        ]
-        return "\n".join(lines)
-
-class OpenAILLM:
-    def __init__(self, api_key: str, agent_guide: str | None = None, required_output_format: str | None = None):
-        from openai import OpenAI
-        self.client = OpenAI(api_key=api_key)
-        self.agent_guide = agent_guide or ""
-        self.required_output_format = required_output_format or ""
-
-    def generate(self, query: str, contexts: List[Dict]) -> str:
-        # System instructions: base behavior + internal SOP + required output format
-        system_prompt = "You are a helpful company policy assistant. Cite sources by title and section when relevant."
-        if self.agent_guide:
-            system_prompt += "\n\nInternal SOP for agents:\n" + self.agent_guide
-        if self.required_output_format:
-            system_prompt += "\n\n" + self.required_output_format
-
-        # Build user-visible part of the prompt: question + sources
-        sources_block = f"Question: {query}\nSources:\n"
-        for c in contexts:
-            sources_block += f"- {c.get('title')} | {c.get('section')}\n{c.get('text')[:600]}\n---\n"
-        sources_block += "Write a concise, accurate answer grounded in the sources. If unsure, say so."
-
-        resp = self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": sources_block},
-            ],
-            temperature=0.1
-        )
-        return resp.choices[0].message.content
-
-# ---- RAG Orchestrator & Metrics ----
 class Metrics:
+    """Tracks retrieval and generation latencies."""
+    
     def __init__(self):
         self.t_retrieval = []
         self.t_generation = []
 
     def add_retrieval(self, ms: float):
+        """Record retrieval latency in milliseconds."""
         self.t_retrieval.append(ms)
 
     def add_generation(self, ms: float):
+        """Record generation latency in milliseconds."""
         self.t_generation.append(ms)
 
     def summary(self) -> Dict:
+        """Compute average latencies."""
         avg_r = sum(self.t_retrieval)/len(self.t_retrieval) if self.t_retrieval else 0.0
         avg_g = sum(self.t_generation)/len(self.t_generation) if self.t_generation else 0.0
         return {
@@ -178,7 +33,15 @@ class Metrics:
             "avg_generation_latency_ms": round(avg_g, 2),
         }
 
+
 class RAGEngine:
+    """
+    Main RAG orchestrator.
+    
+    Handles document ingestion (embedding + storage), retrieval (with MMR reranking),
+    and generation (LLM-based answer creation).
+    """
+    
     def __init__(self):
         self.embedder = LocalEmbedder(dim=384)
 
@@ -201,6 +64,7 @@ class RAGEngine:
             "Details:\n"
             "<Any additional explanation or important policy notes>"
         )
+        
         # Vector store selection
         self._fallback_used = False
         if settings.vector_store == "qdrant":
@@ -243,11 +107,20 @@ class RAGEngine:
     def _mmr_rerank(self, candidates: List[Tuple[float, Dict]], k: int, lambda_param: float = 0.7) -> List[Dict]:
         """
         Maximal Marginal Relevance reranking with metadata-based boosting.
+        
         lambda_param: 1.0 = pure relevance, 0.0 = pure diversity
         
         Metadata boosting:
         - Heading level: H1=1.2x, H2=1.15x, H3=1.1x
         - Section priority: high=1.15x, medium=1.05x, low=1.0x
+        
+        Args:
+            candidates: List of (score, metadata) tuples from vector search
+            k: Number of results to return
+            lambda_param: Balance between relevance (1.0) and diversity (0.0)
+        
+        Returns:
+            List of reranked metadata dictionaries
         """
         if not candidates or k >= len(candidates):
             return [meta for _, meta in candidates[:k]]
@@ -302,6 +175,17 @@ class RAGEngine:
         return selected
 
     def ingest_chunks(self, chunks: List[Dict]) -> Tuple[int, int]:
+        """
+        Store chunks in vector database (embed + upsert).
+        
+        Deduplicates chunks based on hash. Only new chunks are embedded and stored.
+        
+        Args:
+            chunks: List of chunk dictionaries with text and metadata
+        
+        Returns:
+            Tuple of (new_docs_count, new_chunks_count)
+        """
         vectors = []
         metas = []
         doc_titles_before = set(self._doc_titles)
@@ -332,6 +216,16 @@ class RAGEngine:
         return (len(self._doc_titles) - len(doc_titles_before), len(metas))
 
     def retrieve(self, query: str, k: int = 4) -> List[Dict]:
+        """
+        Retrieve and rerank relevant chunks for a query.
+        
+        Args:
+            query: User question
+            k: Number of chunks to return
+        
+        Returns:
+            List of reranked chunk metadata dictionaries
+        """
         t0 = time.time()
         qv = self.embedder.embed(query)
         candidates = self.store.search(qv, k=k * 2) 
@@ -340,6 +234,16 @@ class RAGEngine:
         return reranked_results
 
     def generate(self, query: str, contexts: List[Dict]) -> str:
+        """
+        Generate answer from query and retrieved contexts.
+        
+        Args:
+            query: User question
+            contexts: Retrieved chunk metadata
+        
+        Returns:
+            Generated answer string
+        """
         t0 = time.time()
         answer = self.llm.generate(query, contexts)
         self.metrics.add_generation((time.time()-t0)*1000.0)
@@ -347,6 +251,12 @@ class RAGEngine:
         return answer
 
     def stats(self) -> Dict:
+        """
+        Get engine statistics.
+        
+        Returns:
+            Dictionary with counts, latencies, and configuration
+        """
         m = self.metrics.summary()
         return {
             "total_docs": len(self._doc_titles),
@@ -358,21 +268,3 @@ class RAGEngine:
             **m
         }
 
-# ---- Helpers ----
-def build_chunks_from_docs(docs: List[Dict], chunk_size: int, overlap: int) -> List[Dict]:
-    out = []
-    for d in docs:
-        for ch in chunk_text(d["text"], chunk_size, overlap):
-            out.append({
-                "title": d["title"],
-                "section": d["section"],
-                "text": ch,
-                "heading_level": d.get("heading_level", 0),
-                "section_priority": d.get("section_priority", "low")
-            })
-    return out
-
-def _hash_to_uuid(hex_hash: str) -> str:
-    # truncate/pad to 32 chars as UUIDs must be exactly 32 hex digits
-    trimmed = hex_hash[:32].ljust(32, "0")
-    return str(uuid.UUID(trimmed))

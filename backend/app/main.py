@@ -1,11 +1,15 @@
-from fastapi import FastAPI, HTTPException
+"""FastAPI application entry point."""
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from typing import List
-from .models import IngestResponse, AskRequest, AskResponse, MetricsResponse, Citation, Chunk
-from .settings import settings
-from .ingest import load_documents
-from .rag import RAGEngine, build_chunks_from_docs
+from .rag import RAGEngine
+from .api.routes import (
+    set_engine,
+    get_health,
+    get_metrics,
+    post_ingest,
+    post_ask,
+)
+from .api.schemas import IngestResponse, AskRequest, AskResponse, MetricsResponse
 
 app = FastAPI(title="AI Policy & Product Helper")
 
@@ -17,47 +21,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Initialize RAG engine and register with routes
 engine = RAGEngine()
+set_engine(engine)
 
-@app.get("/api/health")
-def health():
-    return {"status": "ok"}
-
-@app.get("/api/metrics", response_model=MetricsResponse)
-def metrics():
-    s = engine.stats()
-    return MetricsResponse(**s)
-
-@app.post("/api/ingest", response_model=IngestResponse)
-def ingest():
-    try:
-        docs = load_documents(settings.data_dir)
-        chunks = build_chunks_from_docs(docs, settings.chunk_size, settings.chunk_overlap)
-        new_docs, new_chunks = engine.ingest_chunks(chunks)
-        return IngestResponse(indexed_docs=new_docs, indexed_chunks=new_chunks)
-    except Exception as e:
-        if isinstance(e, FileNotFoundError):
-            raise HTTPException(status_code=404, detail=f"Data directory not found: {settings.data_dir}")
-        raise HTTPException(status_code=500, detail=f"Error ingesting documents: {str(e)}")
-
-@app.post("/api/ask", response_model=AskResponse)
-def ask(req: AskRequest):
-    ctx = engine.retrieve(req.query, k=req.k or 4)
-    answer = engine.generate(req.query, ctx)
-    citations = [Citation(title=c.get("title"), section=c.get("section")) for c in ctx]
-    chunks = [Chunk(title=c.get("title"), section=c.get("section"), text=c.get("text")) for c in ctx]
-    stats = engine.stats()
-    # Create MetricsResponse and convert to dict, then add legacy fields
-    metrics_dict = MetricsResponse(**stats).model_dump()
-    metrics_dict.update({
-        # Legacy fields for backward compatibility
-        "retrieval_ms": stats["avg_retrieval_latency_ms"],
-        "generation_ms": stats["avg_generation_latency_ms"],
-    })
-    return AskResponse(
-        query=req.query,
-        answer=answer,
-        citations=citations,
-        chunks=chunks,
-        metrics=metrics_dict
-    )
+# Register routes
+app.get("/api/health")(get_health)
+app.get("/api/metrics", response_model=MetricsResponse)(get_metrics)
+app.post("/api/ingest", response_model=IngestResponse)(post_ingest)
+app.post("/api/ask", response_model=AskResponse)(post_ask)

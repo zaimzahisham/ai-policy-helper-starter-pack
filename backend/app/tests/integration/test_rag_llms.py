@@ -1,7 +1,10 @@
+"""Integration tests for LLM providers in app/rag/llms.py."""
 import pytest
 from app import rag
 
-def test_openai_mode_with_mock(monkeypatch, client):
+
+def test_openai_llm_with_mock(monkeypatch, client):
+    """Test OpenAILLM provider via mocked API call."""
     class FakeOpenAI:
         def __init__(self, api_key, agent_guide: str | None = None, required_output_format: str | None = None):
             self.api_key = api_key
@@ -10,8 +13,9 @@ def test_openai_mode_with_mock(monkeypatch, client):
         def generate(self, query, contexts):
             return "mocked openai answer"
 
-    # Match OpenAILLM constructor signature (api_key, agent_guide, required_output_format)
-    monkeypatch.setattr(rag, "OpenAILLM", lambda api_key, agent_guide=None, required_output_format=None: FakeOpenAI(api_key, agent_guide, required_output_format))
+    # Patch OpenAILLM where it's imported in core.py
+    # Use string path to ensure we patch the right location
+    monkeypatch.setattr("app.rag.core.OpenAILLM", lambda api_key, agent_guide=None, required_output_format=None: FakeOpenAI(api_key, agent_guide, required_output_format))
     monkeypatch.setenv("LLM_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_API_KEY", "dummy")
 
@@ -21,9 +25,9 @@ def test_openai_mode_with_mock(monkeypatch, client):
 
     # Need a fresh engine after env changes
     rag_engine = rag.RAGEngine()
-    # optionally swap main.engine = rag_engine if tests use global
-    from app import main
-    main.engine = rag_engine
+    # Set the engine in routes module
+    from app.api.routes import set_engine
+    set_engine(rag_engine)
 
     client.post("/api/ingest")
     resp = client.post("/api/ask", json={"query": "hello?"})

@@ -41,22 +41,38 @@ curl -X POST http://localhost:8000/api/ask -H 'Content-Type: application/json' \
 ai-policy-helper/
 ├─ backend/
 │  ├─ app/
-│  │  ├─ main.py          # FastAPI app + endpoints
+│  │  ├─ main.py          # FastAPI app entry point
 │  │  ├─ settings.py      # config/env
-│  │  ├─ rag.py           # embeddings, vector store, retrieval, generation
-│  │  ├─ models.py        # pydantic models
-│  │  ├─ ingest.py        # doc loader & chunker
+│  │  ├─ api/             # API layer
+│  │  │  ├─ __init__.py
+│  │  │  ├─ schemas.py    # Pydantic request/response models
+│  │  │  └─ routes.py     # FastAPI route handlers
+│  │  ├─ ingest/          # Document ingestion module
+│  │  │  ├─ __init__.py
+│  │  │  ├─ core.py       
+│  │  │  ├─ helpers.py    
+│  │  │  └─ utils.py      
+│  │  ├─ rag/              # RAG engine module
+│  │  │  ├─ __init__.py
+│  │  │  ├─ core.py        # RAGEngine, Metrics, MMR reranking
+│  │  │  ├─ embedders.py   
+│  │  │  ├─ stores.py      
+│  │  │  └─ llms.py        
+│  │  ├─ shared/           # Shared utilities
+│  │  │  ├─ __init__.py
+│  │  │  └─ helpers.py     
 │  │  ├─ __init__.py
 │  │  └─ tests/
 │  │     ├─ conftest.py        # pytest fixtures & setup
-│  │     ├─ unit/               # unit tests for isolated logic
-│  │     │  ├─ test_ingest.py  # chunking & doc loading tests
-│  │     │  └─ test_rag_helpers.py # hash→UUID, build_chunks tests
+│  │     ├─ unit/              # unit tests for isolated logic
+│  │     │  ├─ test_ingest.py  # chunking, doc loading, build_chunks tests
+│  │     │  ├─ test_rag_core.py # RAGEngine initialization tests
+│  │     │  └─ test_shared_helpers.py # convert_to_uuid tests
 │  │     └─ integration/       # integration tests for API flows
 │  │        ├─ test_api.py     # ingest, metrics, ask endpoints
 │  │        ├─ test_acceptance_queries.py # acceptance criteria validation
 │  │        ├─ test_fallback.py # Qdrant fallback to InMemoryStore
-│  │        └─ test_openai_mode_with_mock.py # OpenAI provider smoke test
+│  │        └─ test_rag_llms.py # LLM provider tests (OpenAI, future: Ollama)
 │  ├─ requirements.txt
 │  └─ Dockerfile
 ├─ frontend/
@@ -130,39 +146,43 @@ docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm backend
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Backend (FastAPI)                            │
 │  ┌──────────────────────────────────────────────────────────┐   │
-│  │                    API Endpoints                         │   │
+│  │              API Layer (app/api/)                        │   │
+│  │  - routes.py: Route handlers                             │   │
+│  │  - schemas.py: Pydantic models                           │   │
 │  │  - POST /api/ingest  → Load & chunk documents            │   │
 │  │  - POST /api/ask     → RAG query flow                    │   │
 │  │  - GET  /api/metrics → System statistics                 │   │
 │  │  - GET  /api/health  → Health check                      │   │
-│  └──────────────────────┬───────────────────────────────────┘   │
-│                          │                                      │
+│  └────────────────────────┬─────────────────────────────────┘   │
+│                           │                                     │
 │         ┌─────────────────┼─────────────────┐                   │
 │         │                 │                 │                   │
 │         ▼                 ▼                 ▼                   │
-│  ┌──────────┐    ┌──────────────┐   ┌──────────────┐            │
-│  │  Ingest  │    │   RAGEngine  │   │   Metrics    │            │
-│  │          │    │              │   │              │            │
-│  │ - Load   │    │ - Embed      │   │ - Latencies  │            │
-│  │ - Chunk  │    │ - Retrieve   │   │ - Counts     │            │
-│  │ - Hash   │    │ - Rerank     │   │ - Fallback   │            │
-│  └────┬─────┘    │ - Generate   │   └──────────────┘            │
-│       │          └──────┬────────┘                              │
-│       │                 │                                       │
-│       │                 │                                       │
-│       │    ┌────────────┼────────────┐                          │
-│       │    │            │            │                          │
-│       ▼    ▼            ▼            ▼                          │
-│  ┌──────────┐  ┌──────────────┐  ┌──────────────┐               │
-│  │ Local    │  │  Vector      │  │  LLM         │               │
-│  │ Embedder │  │  Store       │  │  Provider    │               │
-│  │          │  │              │  │              │               │
-│  │ - Hash-  │  │ - Qdrant     │  │ - StubLLM    │               │
-│  │   based  │  │   (primary)  │  │   (default)  │               │
-│  │ - 384dim │  │ - InMemory   │  │ - OpenAILLM  │               │
-│  │          │  │   (fallback) │  │   (optional) │               │
-│  └──────────┘  └──────┬───────┘  └──────────────┘               │
-│                       │                                         │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐           │
+│  │  Ingest      │  │   RAGEngine  │  │   Metrics    │           │
+│  │  (ingest/)   │  │   (rag/)     │  │   (rag/)     │           │
+│  │              │  │              │  │              │           │
+│  │ - Load docs  │  │ - Embed      │  │ - Latencies  │           │
+│  │ - Chunk text │  │ - Retrieve   │  │ - Counts     │           │
+│  │ - Hash       │  │ - Rerank     │  │ - Fallback   │           │
+│  │ - Metadata   │  │ - Generate   │  └──────────────┘           │
+│  └────┬─────────┘  └───────┬──────┘                             │
+│       │                    │                                    │
+│       │                    │                                    │
+│       │    ┌───────────────┼───────────────┐                    │
+│       │    │               │               │                    │
+│       ▼    ▼               ▼               ▼                    │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐           │
+│  │ Local        │  │  Vector      │  │  LLM         │           │
+│  │ Embedder     │  │  Store       │  │  Provider    │           │
+│  │ (embedders)  │  │  (stores)    │  │  (llms)      │           │
+│  │              │  │              │  │              │           │
+│  │ - Hash-      │  │ - Qdrant     │  │ - StubLLM    │           │
+│  │   based      │  │   (primary)  │  │   (default)  │           │
+│  │ - 384dim     │  │ - InMemory   │  │ - OpenAILLM  │           │
+│  │              │  │   (fallback) │  │   (optional) │           │
+│  └──────────────┘  └──────┬───────┘  └──────────────┘           │
+│                           │                                     │
 └───────────────────────┼─────────────────────────────────────────┘
                         │
                         │ gRPC/HTTP
@@ -196,8 +216,14 @@ Data Flow:
 - **Internal SOP as system instructions (not retrievable policy)** — `Internal_SOP_Agent_Guide.md` is treated as internal behavior guidance for the agent, not as a user-facing policy document. It is explicitly excluded from ingestion in `load_documents`, so it never appears as a retrieved chunk or citation. Instead, `RAGEngine` loads its contents once at startup into `agent_guide` and passes it into all LLM providers (stub + OpenAI) as part of the system prompt. This means the agent follows the SOP (tone, no hallucinations, cite sources, escalate when unsure) without exposing the guide itself to end users.
 - **Structured prompt architecture with consistent output format** — LLM prompts now use a proper system/user message split (following OpenAI best practices). The system prompt contains: base role definition, internal SOP rules (if present), and a required output format specification (`Answer / Sources / Details`). The user prompt contains only the question and retrieved context. The output format is defined once in `RAGEngine.required_output_format` and passed to all LLM providers (StubLLM, OpenAILLM, and future providers like Ollama), ensuring consistent formatting across all modes. This DRY approach makes it easy to change the format in one place and guarantees that stub, OpenAI, and any future LLM implementations produce answers with the same structure.
 - **Layered automated coverage** — Test suite reorganized into unit vs integration:
-  - Unit layer protects deterministic building blocks (`_hash_to_uuid`, chunking, doc loaders, metrics math), and is easy to extend as more logic gets isolated.
+  - Unit layer protects deterministic building blocks (`convert_to_uuid`, chunking, doc loaders, metrics math), and is easy to extend as more logic gets isolated.
   - Integration layer covers ingest idempotency, metrics, acceptance queries, Qdrant-down fallback, ingest error-path (JSON + CORS), and a mocked OpenAI-mode smoke test so provider switching is guarded without real API calls.
+- **Modular code structure** — Backend refactored into clear module boundaries for scalability:
+  - `app/api/` — API layer (routes, schemas) separated from business logic
+  - `app/ingest/` — Document ingestion (core, helpers, utils)
+  - `app/rag/` — RAG engine (core, embedders, stores, llms)
+  - `app/shared/` — Shared utilities (convert_to_uuid)
+  - This structure makes it easy to extend (add routes, new LLM providers, new stores) and test components in isolation.
 - **Acceptance checks baked into tests** — `tests/integration/test_acceptance_queries.py` programmatically verifies the "damaged blender" and "East Malaysia SLA" prompts cite the mandated documents and contain required content (e.g., "bulky items" mention), matching the rubric expectations.
 
 ### Frontend Enhancements
@@ -275,7 +301,8 @@ npm run dev
 ### Switching LLMs
 - Default is **stub** (deterministic, offline).
 - To use OpenAI: set `LLM_PROVIDER=openai` and `OPENAI_API_KEY` in `.env`. (You are required to demo with OpenAI, API key is provided)
-- To use Ollama: set `LLM_PROVIDER=stub` (keep stub) or extend `rag.py` to add an `OllamaLLM` class.
+- To use Ollama: set `LLM_PROVIDER=stub` (keep stub) or extend `app/rag/llms.py` to add an `OllamaLLM` class following the same interface as `StubLLM` and `OpenAILLM`.
+- All LLM providers receive the same `agent_guide` (internal SOP) and `required_output_format` for consistent behavior.
 - Please document any changes you make.
 
 ### Vector Store

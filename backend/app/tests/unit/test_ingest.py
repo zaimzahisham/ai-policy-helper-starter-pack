@@ -1,4 +1,5 @@
-from app.ingest import chunk_text, _detect_section_priority, _md_sections, load_documents
+from app.ingest import chunk_text, load_documents, build_chunks_from_docs
+from app.ingest.helpers import _detect_section_priority, _md_sections
 from app.settings import settings
 
 def test_chunk_text_with_overlap():
@@ -89,3 +90,42 @@ def test_internal_sop_agent_guide_excluded_from_load_documents():
     docs = load_documents(settings.data_dir)
     titles = {d["title"] for d in docs}
     assert "Internal_SOP_Agent_Guide.md" not in titles
+
+
+def test_build_chunks_from_docs_preserves_titles():
+    """Test that build_chunks_from_docs preserves document titles in chunks."""
+    docs = [
+        {"title": "Doc1", "section": "Intro", "text": "a b c d"},
+        {"title": "Doc2", "section": "Body", "text": "e f g"},
+    ]
+    chunks = build_chunks_from_docs(docs, chunk_size=2, overlap=0)
+    assert chunks[0]["title"] == "Doc1"
+    assert chunks[0]["text"] == "a b"
+    assert chunks[-1]["title"] == "Doc2"
+
+
+def test_build_chunks_from_docs_preserves_metadata():
+    """Test that metadata (heading_level, section_priority) is preserved in chunks."""
+    docs = [
+        {
+            "title": "Policy.md",
+            "section": "SLA",
+            "text": "West Malaysia: 2-4 business days",
+            "heading_level": 2,
+            "section_priority": "high"
+        },
+        {
+            "title": "Guide.md",
+            "section": "Introduction",
+            "text": "Welcome to the guide",
+            "heading_level": 1,
+            "section_priority": "low"
+        },
+    ]
+    chunks = build_chunks_from_docs(docs, chunk_size=10, overlap=0)
+    
+    # Check that metadata is preserved
+    assert chunks[0]["heading_level"] == 2
+    assert chunks[0]["section_priority"] == "high"
+    assert chunks[1]["heading_level"] == 1
+    assert chunks[1]["section_priority"] == "low"

@@ -6,11 +6,13 @@ def test_qdrant_fallback(monkeypatch):
         def __init__(*args, **kwargs):
             raise ConnectionError("qdrant down")
 
-    monkeypatch.setattr(rag, "QdrantClient", BoomClient)
+    # Patch QdrantClient where it's imported in stores.py
+    monkeypatch.setattr("app.rag.stores.QdrantClient", BoomClient)
     engine = rag.RAGEngine()
     assert engine.store.__class__.__name__ == "InMemoryStore"
 
     # Optional: verify ingest still works with fallback
     docs = [{"title": "Doc", "section": "Body", "text": "hello world"}]
-    chunks = rag.build_chunks_from_docs(docs, chunk_size=5, overlap=0)
+    from app.ingest import build_chunks_from_docs
+    chunks = build_chunks_from_docs(docs, chunk_size=5, overlap=0)
     engine.ingest_chunks(chunks)  # should not raise
